@@ -17,6 +17,9 @@ package com.android.nfc.cardemulation;
 
 import android.content.ComponentName;
 import android.content.Context;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
+import android.content.pm.PackageManager.NameNotFoundException;
 import android.nfc.INfcCardEmulation;
 import android.nfc.INfcFCardEmulation;
 import android.nfc.NfcAdapter;
@@ -110,7 +113,7 @@ public class CardEmulationManager implements RegisteredServicesCache.Callback,
                 context, mNfcFServicesCache, mT3tIdentifiersCache, this);
         mServiceCache.initialize();
         mNfcFServicesCache.initialize();
-        mPowerManager = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+        mPowerManager = context.getSystemService(PowerManager.class);
     }
 
     public INfcCardEmulation getNfcCardEmulationInterface() {
@@ -318,14 +321,23 @@ public class CardEmulationManager implements RegisteredServicesCache.Callback,
                         + userIdDefaultPaymentService);
             }
         }
-
         if (defaultPaymentService == null) {
             // A payment service may have been removed, leaving only one;
             // in that case, automatically set that app as default.
             int numPaymentServices = 0;
             ComponentName lastFoundPaymentService = null;
+            PackageManager pm;
+            try {
+                pm = mContext.createPackageContextAsUser("android", /*flags=*/0,
+                    new UserHandle(userId)).getPackageManager();
+            } catch (NameNotFoundException e) {
+                Log.e(TAG, "Could not create user package context");
+                return;
+            }
+
             for (ApduServiceInfo service : services) {
-                if (service.hasCategory(CardEmulation.CATEGORY_PAYMENT))  {
+                if (service.hasCategory(CardEmulation.CATEGORY_PAYMENT)
+                            && wasServicePreInstalled(pm, service.getComponent())) {
                     numPaymentServices++;
                     lastFoundPaymentService = service.getComponent();
                 }
@@ -347,6 +359,22 @@ public class CardEmulationManager implements RegisteredServicesCache.Callback,
         }
     }
 
+    boolean wasServicePreInstalled(PackageManager packageManager, ComponentName service) {
+        try {
+            ApplicationInfo ai = packageManager
+                    .getApplicationInfo(service.getPackageName(), /*flags=*/0);
+            if ((ApplicationInfo.FLAG_SYSTEM & ai.flags) != 0) {
+                if (DBG) Log.d(TAG, "Service was pre-installed on the device");
+                return true;
+            }
+        } catch (NameNotFoundException e) {
+            Log.e(TAG, "Service is not currently installed on the device.");
+            return false;
+        }
+        if (DBG) Log.d(TAG, "Service was not pre-installed on the device");
+        return false;
+    }
+
     ComponentName getDefaultServiceForCategory(int userId, String category,
              boolean validateInstalled) {
         if (!CardEmulation.CATEGORY_PAYMENT.equals(category)) {
@@ -354,9 +382,9 @@ public class CardEmulationManager implements RegisteredServicesCache.Callback,
             return null;
         }
         // Load current payment default from settings
-        String name = Settings.Secure.getStringForUser(
-                mContext.getContentResolver(), Settings.Secure.NFC_PAYMENT_DEFAULT_COMPONENT,
-                userId);
+        String name = Settings.Secure.getString(
+                mContext.createContextAsUser(UserHandle.of(userId), 0).getContentResolver(),
+                Settings.Secure.NFC_PAYMENT_DEFAULT_COMPONENT);
         if (name != null) {
             ComponentName service = ComponentName.unflattenFromString(name);
             if (!validateInstalled || service == null) {
@@ -379,9 +407,10 @@ public class CardEmulationManager implements RegisteredServicesCache.Callback,
         // ideally we overlay our local changes over whatever is in
         // Settings.Secure
         if (service == null || mServiceCache.hasService(userId, service)) {
-            Settings.Secure.putStringForUser(mContext.getContentResolver(),
+            Settings.Secure.putString(mContext
+                    .createContextAsUser(UserHandle.of(userId), 0).getContentResolver(),
                     Settings.Secure.NFC_PAYMENT_DEFAULT_COMPONENT,
-                    service != null ? service.flattenToString() : null, userId);
+                    service != null ? service.flattenToString() : null);
         } else {
             Log.e(TAG, "Could not find default service to make default: " + service);
         }
@@ -427,7 +456,7 @@ public class CardEmulationManager implements RegisteredServicesCache.Callback,
                         data, 0, SELECT_AID_HDR.length)) {
             return false;
         }
-        int aidLength = data[SELECT_APDU_HDR_LENGTH - 1];
+        int aidLength = Byte.toUnsignedInt(data[SELECT_APDU_HDR_LENGTH - 1]);
         if (data.length >= SELECT_APDU_HDR_LENGTH + NDEF_AID_LENGTH
                 && aidLength == NDEF_AID_LENGTH) {
             if (Arrays.equals(data, SELECT_APDU_HDR_LENGTH,
@@ -596,7 +625,8 @@ public class CardEmulationManager implements RegisteredServicesCache.Callback,
         public boolean setPreferredService(ComponentName service)
                 throws RemoteException {
             NfcPermissions.enforceUserPermissions(mContext);
-            if (!isServiceRegistered(UserHandle.getCallingUserId(), service)) {
+            if (!isServiceRegistered( UserHandle.getUserHandleForUid(
+                    Binder.getCallingUid()).getIdentifier(), service)) {
                 Log.e(TAG, "setPreferredService: unknown component.");
                 return false;
             }
@@ -702,7 +732,8 @@ public class CardEmulationManager implements RegisteredServicesCache.Callback,
         public boolean enableNfcFForegroundService(ComponentName service)
                 throws RemoteException {
             NfcPermissions.enforceUserPermissions(mContext);
-            if (isNfcFServiceInstalled(UserHandle.getCallingUserId(), service)) {
+            if (isNfcFServiceInstalled(UserHandle.getUserHandleForUid(
+                    Binder.getCallingUid()).getIdentifier(), service)) {
                 return mEnabledNfcFServices.registerEnabledForegroundService(service,
                         Binder.getCallingUid());
             }
