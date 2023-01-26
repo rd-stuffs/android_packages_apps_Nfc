@@ -37,12 +37,15 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.IPackageManager;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.content.pm.UserInfo;
 import android.content.res.Resources.NotFoundException;
 import android.media.AudioAttributes;
 import android.media.SoundPool;
 import android.net.Uri;
+import android.nfc.AvailableNfcAntenna;
 import android.nfc.BeamShareData;
+import android.nfc.cardemulation.CardEmulation;
 import android.nfc.ErrorCodes;
 import android.nfc.FormatException;
 import android.nfc.IAppCallback;
@@ -57,6 +60,7 @@ import android.nfc.INfcUnlockHandler;
 import android.nfc.ITagRemovedCallback;
 import android.nfc.NdefMessage;
 import android.nfc.NfcAdapter;
+import android.nfc.NfcAntennaInfo;
 import android.nfc.Tag;
 import android.nfc.TechListParcel;
 import android.nfc.TransceiveResult;
@@ -469,8 +473,6 @@ public class NfcService implements DeviceHostListener {
     public void onNfcTransactionEvent(byte[] aid, byte[] data, String seName) {
         byte[][] dataObj = {aid, data, seName.getBytes()};
         sendMessage(NfcService.MSG_TRANSACTION_EVENT, dataObj);
-        NfcStatsLog.write(NfcStatsLog.NFC_CARDEMULATION_OCCURRED,
-                NfcStatsLog.NFC_CARDEMULATION_OCCURRED__CATEGORY__OFFHOST, seName);
     }
 
     @Override
@@ -1657,6 +1659,31 @@ public class NfcService implements DeviceHostListener {
                 return false;
             }
             return true;
+        }
+
+        @Override
+        public NfcAntennaInfo getNfcAntennaInfo() {
+            int positionX[] = mContext.getResources().getIntArray(
+                    R.array.antenna_x);
+            int positionY[] = mContext.getResources().getIntArray(
+                    R.array.antenna_y);
+            if(positionX.length != positionY.length){
+                return null;
+            }
+            int width = mContext.getResources().getInteger(R.integer.device_width);
+            int height = mContext.getResources().getInteger(R.integer.device_height);
+            List<AvailableNfcAntenna> availableNfcAntennas = new ArrayList<>();
+            for(int i = 0; i < positionX.length; i++){
+                if(positionX[i] >= width | positionY[i] >= height){
+                    return null;
+                }
+                availableNfcAntennas.add(new AvailableNfcAntenna(positionX[i], positionY[i]));
+            }
+            return new NfcAntennaInfo(
+                    width,
+                    height,
+                    mContext.getResources().getBoolean(R.bool.device_foldable),
+                    availableNfcAntennas);
         }
 
         private int computeLockscreenPollMask(int[] techList) {
@@ -2954,6 +2981,11 @@ public class NfcService implements DeviceHostListener {
 
             try {
                 String reader = new String(readerByteArray, "UTF-8");
+                int uid = -1;
+                StringBuilder aidString = new StringBuilder(aid.length);
+                for (byte b : aid) {
+                    aidString.append(String.format("%02X", b));
+                }
                 for (int userId : mNfcEventInstalledPackages.keySet()) {
                     List<String> packagesOfUser = mNfcEventInstalledPackages.get(userId);
                     String[] installedPackages = new String[packagesOfUser.size()];
@@ -2968,24 +3000,65 @@ public class NfcService implements DeviceHostListener {
                     intent.putExtra(NfcAdapter.EXTRA_AID, aid);
                     intent.putExtra(NfcAdapter.EXTRA_DATA, data);
                     intent.putExtra(NfcAdapter.EXTRA_SECURE_ELEMENT_NAME, reader);
-                    StringBuilder aidString = new StringBuilder(aid.length);
-                    for (byte b : aid) {
-                        aidString.append(String.format("%02X", b));
-                    }
                     String url =
                             new String("nfc://secure:0/" + reader + "/" + aidString.toString());
                     intent.setData(Uri.parse(url));
 
                     final BroadcastOptions options = BroadcastOptions.makeBasic();
                     options.setBackgroundActivityStartsAllowed(true);
+
+                    Map<String, Integer> hasIntentPackages = mContext
+                            .getPackageManager()
+                            .queryBroadcastReceiversAsUser(intent, 0, UserHandle.of(userId))
+                            .stream()
+                            .collect(Collectors.toMap(
+                                      activity -> activity.activityInfo.applicationInfo.packageName,
+                                      activity -> activity.activityInfo.applicationInfo.uid));
+                    if (DBG) {
+                        String[] packageNames = hasIntentPackages
+                                .keySet().toArray(new String[hasIntentPackages.size()]);
+                        Log.d(TAG,
+                                "queryBroadcastReceiversAsUser: " + Arrays.toString(packageNames));
+                    }
+
                     for (int i = 0; i < nfcAccess.length; i++) {
                         if (nfcAccess[i]) {
+                            if (DBG) {
+                                Log.d(TAG,
+                                        "sendOffHostTransactionEvent to " + packagesOfUser.get(i));
+                            }
+                            if (uid == -1 && hasIntentPackages.containsKey(packagesOfUser.get(i))) {
+                                uid = hasIntentPackages.get(packagesOfUser.get(i));
+                            }
                             intent.setPackage(packagesOfUser.get(i));
                             mContext.sendBroadcastAsUser(intent, UserHandle.of(userId), null,
                                     options.toBundle());
                         }
                     }
                 }
+                String aidCategory = mCardEmulationManager
+                        .getRegisteredAidCategory(aidString.toString());
+                if (DBG) Log.d(TAG, "aid cateogry: " + aidCategory);
+
+                int offhostCategory;
+                switch (aidCategory) {
+                    case CardEmulation.CATEGORY_PAYMENT:
+                        offhostCategory = NfcStatsLog
+                              .NFC_CARDEMULATION_OCCURRED__CATEGORY__OFFHOST_PAYMENT;
+                        break;
+                    case CardEmulation.CATEGORY_OTHER:
+                        offhostCategory = NfcStatsLog
+                                .NFC_CARDEMULATION_OCCURRED__CATEGORY__OFFHOST_OTHER;
+                        break;
+                    default:
+                        offhostCategory = NfcStatsLog
+                            .NFC_CARDEMULATION_OCCURRED__CATEGORY__OFFHOST;
+                };
+
+                NfcStatsLog.write(NfcStatsLog.NFC_CARDEMULATION_OCCURRED,
+                        offhostCategory,
+                        reader,
+                        uid);
             } catch (RemoteException e) {
                 Log.e(TAG, "Error in isNfcEventAllowed() " + e);
             } catch (UnsupportedEncodingException e) {
