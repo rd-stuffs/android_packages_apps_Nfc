@@ -24,11 +24,11 @@ import android.nfc.cardemulation.ApduServiceInfo;
 import android.nfc.cardemulation.CardEmulation;
 import android.os.Handler;
 import android.os.Looper;
-import android.os.SystemProperties;
 import android.os.UserHandle;
 import android.os.UserManager;
 import android.provider.Settings;
 import android.provider.Settings.SettingNotFoundException;
+import android.sysprop.NfcProperties;
 import android.util.Log;
 import android.util.proto.ProtoOutputStream;
 
@@ -56,7 +56,7 @@ import java.util.List;
  */
 public class PreferredServices implements com.android.nfc.ForegroundUtils.Callback {
     static final String TAG = "PreferredCardEmulationServices";
-    static final boolean DBG = SystemProperties.getBoolean("persist.nfc.debug_enabled", false);
+    static final boolean DBG = NfcProperties.debug_enabled().orElse(false);
     static final Uri paymentDefaultUri = Settings.Secure.getUriFor(
             Settings.Secure.NFC_PAYMENT_DEFAULT_COMPONENT);
     static final Uri paymentForegroundUri = Settings.Secure.getUriFor(
@@ -111,13 +111,13 @@ public class PreferredServices implements com.android.nfc.ForegroundUtils.Callba
         mAidCache = aidCache;
         mCallback = callback;
         mSettingsObserver = new SettingsObserver(mHandler);
-        mContext.getContentResolver().registerContentObserver(
+        mContext.getContentResolver().registerContentObserverAsUser(
                 paymentDefaultUri,
-                true, mSettingsObserver, UserHandle.USER_ALL);
+                true, mSettingsObserver, UserHandle.ALL);
 
-        mContext.getContentResolver().registerContentObserver(
+        mContext.getContentResolver().registerContentObserverAsUser(
                 paymentForegroundUri,
-                true, mSettingsObserver, UserHandle.USER_ALL);
+                true, mSettingsObserver, UserHandle.ALL);
 
         // Load current settings defaults for payments
         loadDefaultsFromSettings(ActivityManager.getCurrentUser(), false);
