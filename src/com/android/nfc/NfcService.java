@@ -88,6 +88,8 @@ import android.os.Vibrator;
 import android.provider.Settings;
 import android.provider.Settings.SettingNotFoundException;
 import android.se.omapi.ISecureElementService;
+import android.se.omapi.SeFrameworkInitializer;
+import android.se.omapi.SeServiceManager;
 import android.sysprop.NfcProperties;
 import android.text.TextUtils;
 import android.util.EventLog;
@@ -333,6 +335,7 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback 
     boolean mIsSecureNfcCapable;
     boolean mIsRequestUnlockShowed;
     boolean mIsRecovering;
+    boolean mIsNfcUserRestricted;
 
     // polling delay control variables
     private final int mPollDelayTime;
@@ -486,8 +489,14 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback 
         return Settings.Global.getInt(mContentResolver, SETTINGS_SATELLITE_MODE_ENABLED, 0) == 1;
     }
 
+    /** Returns true if NFC has user restriction set. */
+    private boolean isNfcUserRestricted() {
+        return mUserManager.getUserRestrictions().getBoolean(
+                UserManager.DISALLOW_NEAR_FIELD_COMMUNICATION_RADIO);
+    }
+
     boolean shouldEnableNfc() {
-        return getNfcOnSetting() && !isSatelliteModeOn();
+        return getNfcOnSetting() && !isSatelliteModeOn() && !isNfcUserRestricted();
     }
 
     public NfcService(Application nfcApplication) {
@@ -670,6 +679,27 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback 
                     });
         }
 
+        mIsNfcUserRestricted = isNfcUserRestricted();
+        mContext.registerReceiver(
+                new BroadcastReceiver() {
+                    @Override
+                    public void onReceive(Context context, Intent intent) {
+                        if (mIsNfcUserRestricted == isNfcUserRestricted()) {
+                            return;
+                        }
+                        Log.i(TAG, "Disallow NFC user restriction changed from "
+                            + mIsNfcUserRestricted + " to " + !mIsNfcUserRestricted + ".");
+                        mIsNfcUserRestricted = !mIsNfcUserRestricted;
+                        if (shouldEnableNfc()) {
+                            new EnableDisableTask().execute(TASK_ENABLE);
+                        } else {
+                            new EnableDisableTask().execute(TASK_DISABLE);
+                        }
+                    }
+                },
+                new IntentFilter(UserManager.ACTION_USER_RESTRICTIONS_CHANGED)
+        );
+
         new EnableDisableTask().execute(TASK_BOOT);  // do blocking boot tasks
 
         if (NFC_SNOOP_LOG_MODE.equals(NfcProperties.snoop_log_mode_values.FULL) ||
@@ -783,8 +813,13 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback 
 
     private void connectToSeService() {
         try {
-            mSEService = ISecureElementService.Stub.asInterface(ServiceManager.getService(
-                  Context.SECURE_ELEMENT_SERVICE));
+            SeServiceManager manager = SeFrameworkInitializer.getSeServiceManager();
+            if (manager == null) {
+                Log.e(TAG, "SEServiceManager is null");
+                return;
+            }
+            mSEService = ISecureElementService.Stub.asInterface(
+                    manager.getSeManagerServiceRegisterer().get());
             if (mSEService != null) {
                 IBinder seServiceBinder = mSEService.asBinder();
                 seServiceBinder.linkToDeath(mSeServiceDeathRecipient, 0);
@@ -941,7 +976,7 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback 
                         // TODO(279846422) The system property will be temporary
                         // available for vendors that depend on it.
                         // Remove this code when a replacement API is added.
-                        SystemProperties.set("nfc.initialized", "true");
+                        NfcProperties.initialized(true);
                     }
                     if (mIsTagAppPrefSupported) {
                         synchronized (NfcService.this) {
@@ -1397,8 +1432,8 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback 
                 IntentFilter[] filters, TechListParcel techListsParcel) {
             NfcPermissions.enforceUserPermissions(mContext);
             if (!mForegroundUtils.isInForeground(Binder.getCallingUid())) {
-                throw new IllegalStateException("Foreground dispatch can only be enabled/disabled "
-                        + "when your activity is in foreground");
+                Log.e(TAG, "setForegroundDispatch: Caller not in foreground.");
+                return;
             }
             // Short-cut the disable path
             if (intent == null && filters == null && techListsParcel == null) {
@@ -3104,10 +3139,8 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback 
                             if (SEPackages != null && SEPackages.contains(pkgName)) {
                                 continue;
                             }
-                            if (info.applicationInfo != null && ((info.applicationInfo.flags
-                                    & ApplicationInfo.FLAG_SYSTEM) != 0
-                                    || (info.applicationInfo.privateFlags
-                                    & ApplicationInfo.PRIVATE_FLAG_PRIVILEGED) != 0)) {
+                            if (info.applicationInfo != null && (info.applicationInfo.isSystemApp()
+                                    || info.applicationInfo.isPrivilegedApp())) {
                                 intent.setPackage(pkgName);
                                 intent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND);
                                 mContext.sendBroadcastAsUser(intent, userHandle);
