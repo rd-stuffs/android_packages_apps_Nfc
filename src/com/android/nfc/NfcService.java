@@ -44,6 +44,7 @@ import android.media.AudioAttributes;
 import android.media.SoundPool;
 import android.net.Uri;
 import android.nfc.AvailableNfcAntenna;
+import android.nfc.Constants;
 import android.nfc.NfcFrameworkInitializer;
 import android.nfc.NfcServiceManager;
 import android.nfc.cardemulation.CardEmulation;
@@ -134,6 +135,8 @@ import java.util.stream.Collectors;
 public class NfcService implements DeviceHostListener, ForegroundUtils.Callback {
     static final boolean DBG = NfcProperties.debug_enabled().orElse(false);
     static final String TAG = "NfcService";
+    private static final int APP_INFO_FLAGS_SYSTEM_APP =
+            ApplicationInfo.FLAG_SYSTEM | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP;
 
     public static final String SERVICE_NAME = "nfc";
 
@@ -3197,6 +3200,10 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback 
             return packages;
         }
 
+        private boolean isSystemApp(ApplicationInfo applicationInfo) {
+             return ((applicationInfo.flags & APP_INFO_FLAGS_SYSTEM_APP) != 0);
+        }
+
         private void sendPreferredPaymentChangedEvent(Intent intent) {
             intent.addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES);
             // Resume app switches so the receivers can start activities without delay
@@ -3228,7 +3235,8 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback 
                             if (SEPackages != null && SEPackages.contains(pkgName)) {
                                 continue;
                             }
-                            if (info.applicationInfo != null && (info.applicationInfo.isSystemApp()
+                            if (info.applicationInfo != null
+                                    && (isSystemApp(info.applicationInfo)
                                     || info.applicationInfo.isPrivilegedApp())) {
                                 intent.setPackage(pkgName);
                                 intent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND);
@@ -3476,12 +3484,12 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback 
         try {
             // Check whether the Settings.Secure.NFC_PAYMENT_FOREGROUND exists or not.
             Settings.Secure.getInt(uc.getContentResolver(),
-                    Settings.Secure.NFC_PAYMENT_FOREGROUND);
+                    Constants.SETTINGS_SECURE_NFC_PAYMENT_FOREGROUND);
         } catch (SettingNotFoundException e) {
             boolean foregroundPreference =
                     mContext.getResources().getBoolean(R.bool.payment_foreground_preference);
             Settings.Secure.putInt(uc.getContentResolver(),
-                    Settings.Secure.NFC_PAYMENT_FOREGROUND, foregroundPreference ? 1 : 0);
+                    Constants.SETTINGS_SECURE_NFC_PAYMENT_FOREGROUND, foregroundPreference ? 1 : 0);
             Log.d(TAG, "Set NFC_PAYMENT_FOREGROUND preference:" + foregroundPreference);
         }
     }
