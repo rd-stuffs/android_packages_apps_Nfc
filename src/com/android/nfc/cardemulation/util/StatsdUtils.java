@@ -17,7 +17,6 @@ package com.android.nfc.cardemulation.util;
 
 import android.annotation.FlaggedApi;
 import android.nfc.cardemulation.CardEmulation;
-import android.os.SystemClock;
 import android.sysprop.NfcProperties;
 import android.util.Log;
 
@@ -62,8 +61,8 @@ public class StatsdUtils {
 
     /** Name of SE terminal to log in statsd */
     private String mSeName = "";
-    /** Timestamp in millis when app binding starts */
-    private long mBindingStartTimeMillis = 0;
+    /** Flag to indicate that the service has not been bound */
+    private boolean mWaitingForServiceBound = false;
     /** Flag to indicate that the service has not sent the first response */
     private boolean mWaitingForFirstResponse = false;
     /** Current transaction's category to log in statsd */
@@ -82,19 +81,14 @@ public class StatsdUtils {
 
     public StatsdUtils(String seName) {
         mSeName = seName;
-
-        // HCEF has no category, default it to PAYMENT category to record every call
-        if (seName.equals(SE_NAME_HCEF)) mTransactionCategory = CardEmulation.CATEGORY_PAYMENT;
     }
 
     public StatsdUtils() {}
 
     private void resetCardEmulationEvent() {
-        // Reset mTransactionCategory value to prevent accidental triggers in general
-        // except for HCEF, which is always intentional because it only works in foreground
-        if (!mSeName.equals(SE_NAME_HCEF)) mTransactionCategory = CardEmulation.EXTRA_CATEGORY;
-        mBindingStartTimeMillis = 0;
+        mWaitingForServiceBound = false;
         mWaitingForFirstResponse = false;
+        mTransactionCategory = CardEmulation.EXTRA_CATEGORY;
         mTransactionUid = -1;
     }
 
@@ -150,15 +144,8 @@ public class StatsdUtils {
     private void logCardEmulationEvent(int statsdCategory) {
         NfcStatsLog.write(
                 NfcStatsLog.NFC_CARDEMULATION_OCCURRED, statsdCategory, mSeName, mTransactionUid);
+        Log.d(TAG, "CardEmulation Event Logged : " + mSeName + " - " + statsdCategory);
         resetCardEmulationEvent();
-    }
-
-    public void logErrorEvent(int errorType, int nciCmd, int ntfStatusCode) {
-        NfcStatsLog.write(NfcStatsLog.NFC_ERROR_OCCURRED, errorType, nciCmd, ntfStatusCode);
-    }
-
-    public void logErrorEvent(int errorType) {
-        logErrorEvent(errorType, 0, 0);
     }
 
     public void setCardEmulationEventCategory(String category) {
@@ -178,19 +165,11 @@ public class StatsdUtils {
     }
 
     public void notifyCardEmulationEventWaitingForService() {
-        mBindingStartTimeMillis = SystemClock.elapsedRealtime();
+        mWaitingForServiceBound = true;
     }
 
     public void notifyCardEmulationEventServiceBound() {
-        int bindingLimitMillis = 500;
-        if (mBindingStartTimeMillis > 0) {
-            long bindingElapsedTimeMillis = SystemClock.elapsedRealtime() - mBindingStartTimeMillis;
-            if (DBG) Log.d(TAG, "binding took " + bindingElapsedTimeMillis + " millis");
-            if (bindingElapsedTimeMillis >= bindingLimitMillis) {
-                logErrorEvent(NfcStatsLog.NFC_ERROR_OCCURRED__TYPE__HCE_LATE_BINDING);
-            }
-            mBindingStartTimeMillis = 0;
-        }
+        mWaitingForServiceBound = false;
     }
 
     public void logCardEmulationWrongSettingEvent() {
@@ -209,13 +188,12 @@ public class StatsdUtils {
 
     public void logCardEmulationDeactivatedEvent() {
         if (mTransactionCategory.equals(CardEmulation.EXTRA_CATEGORY)) {
-            // Skip deactivation calls without select apdu
             resetCardEmulationEvent();
             return;
         }
 
         StatsdResult transactionResult;
-        if (mBindingStartTimeMillis > 0) {
+        if (mWaitingForServiceBound) {
             transactionResult = StatsdResult.DISCONNECTED_BEFORE_BOUND;
         } else if (mWaitingForFirstResponse) {
             transactionResult = StatsdResult.DISCONNECTED_BEFORE_RESPONSE;

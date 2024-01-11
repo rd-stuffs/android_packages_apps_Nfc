@@ -237,14 +237,4 @@ public interface DeviceHost {
     boolean setPowerSavingMode(boolean flag);
 
     boolean isMultiTag();
-
-    void setIsoDepProtocolRoute(int route);
-    void setTechnologyABRoute(int route);
-    void clearRoutingEntry(int clearFlags);
-
-    /**
-    * Set NFCC discovery technology for polling and listening
-    */
-    void setDiscoveryTech(int pollTech, int listenTech);
-    void resetDiscoveryTech();
 }
