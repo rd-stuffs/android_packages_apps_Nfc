@@ -77,7 +77,12 @@ public class AidRoutingManager {
     // Easy look-up what the power is for a certain AID
     HashMap<String, Integer> mPowerForAid = new HashMap<String, Integer>();
 
-    RoutingOptionManager mRoutingOptionManager = RoutingOptionManager.getInstance();
+    private native int doGetDefaultRouteDestination();
+    private native int doGetDefaultOffHostRouteDestination();
+    private native byte[] doGetOffHostUiccDestination();
+    private native byte[] doGetOffHostEseDestination();
+    private native int doGetAidMatchingMode();
+    private native int doGetDefaultIsoDepRouteDestination();
 
     final class AidEntry {
         boolean isOnHost;
@@ -88,24 +93,23 @@ public class AidRoutingManager {
     }
 
     public AidRoutingManager() {
-        mDefaultRoute = mRoutingOptionManager.getDefaultRoute();
+        mDefaultRoute = doGetDefaultRouteDestination();
         if (DBG)
             Log.d(TAG, "mDefaultRoute=0x" + Integer.toHexString(mDefaultRoute));
-        mDefaultOffHostRoute = mRoutingOptionManager.getDefaultOffHostRoute();
+        mDefaultOffHostRoute = doGetDefaultOffHostRouteDestination();
         if (DBG)
             Log.d(TAG, "mDefaultOffHostRoute=0x" + Integer.toHexString(mDefaultOffHostRoute));
-        mOffHostRouteUicc = mRoutingOptionManager.getOffHostRouteUicc();
+        mOffHostRouteUicc = doGetOffHostUiccDestination();
         if (DBG)
             Log.d(TAG, "mOffHostRouteUicc=" + Arrays.toString(mOffHostRouteUicc));
-        mOffHostRouteEse = mRoutingOptionManager.getOffHostRouteEse();
+        mOffHostRouteEse = doGetOffHostEseDestination();
         if (DBG)
           Log.d(TAG, "mOffHostRouteEse=" + Arrays.toString(mOffHostRouteEse));
-        mAidMatchingSupport = mRoutingOptionManager.getAidMatchingSupport();
-        if (DBG)
-            Log.d(TAG, "mAidMatchingSupport=0x" + Integer.toHexString(mAidMatchingSupport));
-        mDefaultIsoDepRoute = mRoutingOptionManager.getDefaultIsoDepRoute();
-        if (DBG)
-            Log.d(TAG, "mDefaultIsoDepRoute=0x" + Integer.toHexString(mDefaultIsoDepRoute));
+        mAidMatchingSupport = doGetAidMatchingMode();
+        if (DBG) Log.d(TAG, "mAidMatchingSupport=0x" + Integer.toHexString(mAidMatchingSupport));
+
+        mDefaultIsoDepRoute = doGetDefaultIsoDepRouteDestination();
+        if (DBG) Log.d(TAG, "mDefaultIsoDepRoute=0x" + Integer.toHexString(mDefaultIsoDepRoute));
     }
 
     public boolean supportsAidPrefixRouting() {
@@ -201,12 +205,7 @@ public class AidRoutingManager {
         boolean aidRouteResolved = false;
         HashMap<String, AidEntry> aidRoutingTableCache = new HashMap<String, AidEntry>(aidMap.size());
         ArrayList<Integer> seList = new ArrayList<Integer>();
-        if (mRoutingOptionManager.isRoutingTableOverrided()) {
-            mDefaultRoute = mRoutingOptionManager.getOverrideDefaultRoute();
-        } else {
-            mDefaultRoute = mRoutingOptionManager.getDefaultRoute();
-        }
-
+        mDefaultRoute = doGetDefaultRouteDestination();
         seList.add(mDefaultRoute);
         if (mDefaultRoute != ROUTE_HOST) {
             seList.add(ROUTE_HOST);
@@ -401,12 +400,11 @@ public class AidRoutingManager {
                     }
                 }
 
-              if (calculateAidRouteSize(aidRoutingTableCache) <= mMaxAidRoutingTableSize ||
-                    mRoutingOptionManager.isRoutingTableOverrided()) {
-                  aidRouteResolved = true;
-                  break;
-              }
-          }
+                if (calculateAidRouteSize(aidRoutingTableCache) <= mMaxAidRoutingTableSize) {
+                    aidRouteResolved = true;
+                    break;
+                }
+            }
 
             if(aidRouteResolved == true) {
                 commit(aidRoutingTableCache);
