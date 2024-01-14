@@ -295,6 +295,10 @@ public class HostEmulationManager {
                     // Just ignore all future APDUs until we resolve to only one
                     mState = STATE_W4_DEACTIVATE;
                     NfcStatsLog.write(NfcStatsLog.NFC_AID_CONFLICT_OCCURRED, selectAid);
+                    if (mStatsdUtils != null) {
+                        mStatsdUtils.setCardEmulationEventCategory(CardEmulation.CATEGORY_OTHER);
+                        mStatsdUtils.logCardEmulationWrongSettingEvent();
+                    }
                     launchResolver((ArrayList<ApduServiceInfo>)resolveInfo.services, null,
                             resolveInfo.category);
                     return;
@@ -335,7 +339,6 @@ public class HostEmulationManager {
                                     statsdCategory,
                                     "HCE",
                                     uid);
-                            Log.d(TAG, "StatsdCeEventsFlag disabled logged: " + statsdCategory);
                         }
                     } else {
                         Log.d(TAG, "Dropping non-select APDU in STATE_W4_SELECT");
