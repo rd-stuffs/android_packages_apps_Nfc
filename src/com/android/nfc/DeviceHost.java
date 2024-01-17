@@ -42,6 +42,8 @@ public interface DeviceHost {
         public void onEeUpdated();
 
         public void onHwErrorReported();
+
+        public void onPollingLoopDetected(Bundle pollingFrame);
     }
 
     public interface TagEndpoint {
@@ -202,6 +204,10 @@ public interface DeviceHost {
 
     public String getNfaStorageDir();
 
+    public boolean isObserveModeSupported();
+
+    public boolean setObserveMode(boolean enable);
+
     /**
     * Get the committed listen mode routing configuration
     */
@@ -221,4 +227,9 @@ public interface DeviceHost {
     * Set NFCC power state by sending NFCEE_POWER_AND_LINK_CNTRL_CMD
     */
     void setNfceePowerAndLinkCtrl(boolean enable);
+
+    /**
+     * Enable or Disable the Power Saving Mode based on flag
+     */
+    boolean setPowerSavingMode(boolean flag);
 }
