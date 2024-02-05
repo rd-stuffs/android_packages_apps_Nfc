@@ -31,14 +31,12 @@ java_defaults {
     name: "NfcNciDefaults",
     static_libs: [
         "android.se.omapi-V1-java",
-        "android.nfc.flags-aconfig-java",
-        "android.permission.flags-aconfig-java",
-        "android.service.chooser.flags-aconfig-java",
         "androidx.annotation_annotation",
         "androidx.appcompat_appcompat",
         "bluetooth-protos-nfc-enums-java-gen",
         "com.google.android.material_material",
         "modules-utils-fastxmlserializer",
+        "modules-utils-shell-command-handler",
         "PlatformProperties",
         "nfc_flags_lib",
     ],
@@ -83,6 +81,7 @@ android_app {
     defaults: ["NfcNciDefaults"],
     min_sdk_version: "34", // should be 35 (making it 34 for compiling for `-next`)
     sdk_version: "module_current",
+    certificate: "nfc",
     srcs: [
         "src/**/*.java",
         "shim_src/apex/**/*.java",
@@ -99,6 +98,9 @@ android_app {
         "framework-permission",
         "framework-statsd.stubs.module_lib",
         "framework-wifi",
+        "android.nfc.flags-aconfig-java",
+        "android.permission.flags-aconfig-java",
+        "android.service.chooser.flags-aconfig-java",
         "unsupportedappusage"
     ],
     apex_available: [
