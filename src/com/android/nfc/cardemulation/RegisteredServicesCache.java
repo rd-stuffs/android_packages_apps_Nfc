@@ -16,6 +16,8 @@
 
 package com.android.nfc.cardemulation;
 
+import android.annotation.TargetApi;
+import android.annotation.FlaggedApi;
 import android.app.ActivityManager;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
@@ -36,6 +38,7 @@ import android.os.ParcelFileDescriptor;
 import android.os.UserHandle;
 import android.os.UserManager;
 import android.sysprop.NfcProperties;
+import android.text.TextUtils;
 import android.util.AtomicFile;
 import android.util.Log;
 import android.util.SparseArray;
@@ -44,7 +47,6 @@ import android.util.proto.ProtoOutputStream;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.util.FastXmlSerializer;
-import com.android.internal.util.XmlUtils;
 
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
@@ -161,6 +163,11 @@ public class RegisteredServicesCache {
                 final int uid = intent.getIntExtra(Intent.EXTRA_UID, -1);
                 String action = intent.getAction();
                 if (DEBUG) Log.d(TAG, "Intent action: " + action);
+
+                if (RoutingOptionManager.getInstance().isRoutingTableOverrided()) {
+                    if (DEBUG) Log.d(TAG, "Routing table overrided. Skip invalidateCache()");
+                }
+
                 if (uid != -1) {
                     boolean replaced = intent.getBooleanExtra(Intent.EXTRA_REPLACING, false) &&
                             (Intent.ACTION_PACKAGE_ADDED.equals(action) ||
@@ -473,6 +480,22 @@ public class RegisteredServicesCache {
             }
         }
     }
+
+    private static final boolean convertValueToBoolean(CharSequence value, boolean defaultValue) {
+       boolean result = false;
+
+        if (TextUtils.isEmpty(value)) {
+            return defaultValue;
+        }
+
+        if (value.equals("1")
+        ||  value.equals("true")
+        ||  value.equals("TRUE"))
+            result = true;
+
+        return result;
+    }
+
     private void readDynamicSettingsLocked() {
         FileInputStream fis = null;
         try {
@@ -514,8 +537,7 @@ public class RegisteredServicesCache {
                                     currentOffHostSE = offHostString;
                                     inService = true;
                                     defaultToObserveMode =
-                                        XmlUtils.convertValueToBoolean(defaultToObserveModeStr,
-                                        false);
+                                        convertValueToBoolean(defaultToObserveModeStr, false);
                                 } catch (NumberFormatException e) {
                                     Log.e(TAG, "Could not parse service uid");
                                 }
@@ -616,7 +638,8 @@ public class RegisteredServicesCache {
                             // See if we have a valid service
                             if (currentComponent != null && currentUid >= 0) {
                                 Log.d(TAG, " end of service tag");
-                                final int userId = UserHandle.getUserId(currentUid);
+                                final int userId =
+                                    UserHandle.getUserHandleForUid(currentUid).getIdentifier();
                                 OtherServiceStatus status =
                                         new OtherServiceStatus(currentUid, checked);
                                 Log.d(TAG, " ## user id - " + userId);
@@ -856,6 +879,40 @@ public class RegisteredServicesCache {
         }
         return true;
     }
+
+    @TargetApi(35)
+    @FlaggedApi(android.nfc.Flags.FLAG_NFC_READ_POLLING_LOOP)
+    public boolean registerPollingLoopFilterForService(int userId, int uid,
+            ComponentName componentName, String pollingLoopFilter) {
+        ArrayList<ApduServiceInfo> newServices = null;
+        synchronized (mLock) {
+            UserServices services = findOrCreateUserLocked(userId);
+            // Check if we can find this service
+            ApduServiceInfo serviceInfo = getService(userId, componentName);
+            if (serviceInfo == null) {
+                Log.e(TAG, "Service " + componentName + " does not exist.");
+                return false;
+            }
+            if (serviceInfo.getUid() != uid) {
+                // This is probably a good indication something is wrong here.
+                // Either newer service installed with different uid (but then
+                // we should have known about it), or somebody calling us from
+                // a different uid.
+                Log.e(TAG, "UID mismatch.");
+                return false;
+            }
+            if (!CardEmulation.isValidPollingLoopFilter(pollingLoopFilter)) {
+                Log.e(TAG, "invalid polling loop filter");
+                return false;
+            }
+            serviceInfo.addPollingLoopFilter(pollingLoopFilter);
+            newServices = new ArrayList<ApduServiceInfo>(services.services.values());
+        }
+        mCallback.onServicesUpdated(userId, newServices, true);
+        return true;
+    }
+
+
 
     public boolean registerAidGroupForService(int userId, int uid,
             ComponentName componentName, AidGroup aidGroup) {
