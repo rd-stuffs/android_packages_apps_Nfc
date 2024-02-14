@@ -1540,6 +1540,12 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback 
         }
 
         @Override
+        public boolean isObserveModeEnabled() {
+            NfcPermissions.enforceUserPermissions(mContext);
+            return mDeviceHost.isObserveModeEnabled();
+        }
+
+        @Override
         public boolean setObserveMode(boolean enable) {
             int callingUid = Binder.getCallingUid();
             UserHandle user = Binder.getCallingUserHandle();

@@ -16,7 +16,9 @@
 package com.android.nfc.cardemulation;
 
 import static com.android.nfc.cardemulation.HostEmulationManager.STATE_W4_SELECT;
+import static com.android.nfc.cardemulation.HostEmulationManager.STATE_W4_SERVICE;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -203,9 +205,9 @@ public final class NfcCardEmulationOccurredTest {
 
         Bundle pollingLoopTypeOnFrame = mock(Bundle.class);
         Bundle pollingLoopTypeOffFrame = mock(Bundle.class);
-        when(pollingLoopTypeOnFrame.getChar(HostApduService.POLLING_LOOP_TYPE_KEY))
+        when(pollingLoopTypeOnFrame.getChar(HostApduService.KEY_POLLING_LOOP_TYPE))
                 .thenReturn(HostApduService.POLLING_LOOP_TYPE_ON);
-        when(pollingLoopTypeOffFrame.getChar(HostApduService.POLLING_LOOP_TYPE_KEY))
+        when(pollingLoopTypeOffFrame.getChar(HostApduService.KEY_POLLING_LOOP_TYPE))
                 .thenReturn(HostApduService.POLLING_LOOP_TYPE_OFF);
         ComponentName componentName = mock(ComponentName.class);
         when(componentName.getPackageName()).thenReturn("com.android.nfc");
@@ -220,5 +222,38 @@ public final class NfcCardEmulationOccurredTest {
         IBinder mActiveService = mHostEmulation.getMessenger();
         Assert.assertNotNull(mActiveService);
         Assert.assertEquals(iBinder, mActiveService);
+    }
+
+    @Test
+    public void testOnPollingLoopDetectedSTATE_XFER() {
+        if (!mNfcSupported) return;
+
+        ComponentName componentName = mock(ComponentName.class);
+        when(componentName.getPackageName()).thenReturn("com.android.nfc");
+        IBinder iBinder = new Binder();
+        ServiceConnection serviceConnection = mHostEmulation.getServiceConnection();
+        serviceConnection.onServiceConnected(componentName, iBinder);
+        int state = mHostEmulation.getState();
+        Log.d(TAG, "testOnPollingLoopDetectedSTATE_XFER() - state = "+state);
+
+        byte[] aidBytes = new byte[] {
+                0x00, (byte)0xA4, 0x04, 0x00,  // command
+                0x08,  // data length
+                (byte)0xA0, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00,
+                0x00,  // card manager AID
+                0x00  // trailer
+        };
+        mHostEmulation.onHostEmulationData(aidBytes);
+        state = mHostEmulation.getState();
+        assertEquals(state, STATE_W4_SERVICE);
+    }
+
+    @Test
+    public void testOnOffHostAidSelected() {
+        if (!mNfcSupported) return;
+
+        mHostEmulation.onOffHostAidSelected();
+        int state = mHostEmulation.getState();
+        assertEquals(state, STATE_W4_SELECT);
     }
 }
