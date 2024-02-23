@@ -31,6 +31,7 @@ import android.nfc.NfcAdapter;
 import android.nfc.cardemulation.ApduServiceInfo;
 import android.nfc.cardemulation.CardEmulation;
 import android.nfc.cardemulation.HostApduService;
+import android.nfc.cardemulation.PollingFrame;
 import android.nfc.cardemulation.Utils;
 import android.os.Bundle;
 import android.os.Handler;
@@ -100,6 +101,7 @@ public class HostEmulationManager {
     final KeyguardManager mKeyguard;
     final Object mLock;
     final PowerManager mPowerManager;
+    private final Looper mLooper;
 
     private final StatsdUtils mStatsdUtils;
 
@@ -137,8 +139,9 @@ public class HostEmulationManager {
     int mState;
     byte[] mSelectApdu;
 
-    public HostEmulationManager(Context context, RegisteredAidCache aidCache) {
+    public HostEmulationManager(Context context, Looper looper, RegisteredAidCache aidCache) {
         mContext = context;
+        mLooper = looper;
         mLock = new Object();
         mAidCache = aidCache;
         mState = STATE_IDLE;
@@ -152,7 +155,7 @@ public class HostEmulationManager {
      *  Preferred payment service changed
      */
     public void onPreferredPaymentServiceChanged(int userId, final ComponentName service) {
-        new Handler(Looper.getMainLooper()).post(() -> {
+        new Handler(mLooper).post(() -> {
             synchronized (mLock) {
                 if (service != null) {
                     bindPaymentServiceLocked(userId, service);
@@ -207,9 +210,9 @@ public class HostEmulationManager {
                 mState = STATE_POLLING_LOOP;
             }
             Messenger service = null;
-            if (pollingFrame.getChar(HostApduService.KEY_POLLING_LOOP_TYPE)
-                    == HostApduService.POLLING_LOOP_TYPE_UNKNOWN) {
-                byte[] data = pollingFrame.getByteArray(HostApduService.KEY_POLLING_LOOP_DATA);
+            if (pollingFrame.getInt(PollingFrame.KEY_POLLING_LOOP_TYPE)
+                    == PollingFrame.POLLING_LOOP_TYPE_UNKNOWN) {
+                byte[] data = pollingFrame.getByteArray(PollingFrame.KEY_POLLING_LOOP_DATA);
                 String dataStr = HexFormat.of().formatHex(data).toUpperCase(Locale.ROOT);
                 List<ApduServiceInfo> serviceInfos =
                         mPollingLoopFilters.get(ActivityManager.getCurrentUser()).get(dataStr);
@@ -238,17 +241,17 @@ public class HostEmulationManager {
                 if (mActiveService != null) {
                     service = mActiveService;
                 } else if (mPendingPollingLoopFrames != null) {
-                    char type = pollingFrame.getChar(HostApduService.KEY_POLLING_LOOP_TYPE);
-                    int onCount = type == HostApduService.POLLING_LOOP_TYPE_ON ? 1 : 0;
-                    int offCount = type == HostApduService.POLLING_LOOP_TYPE_OFF ? 1 : 0;
+                    int type = pollingFrame.getInt(PollingFrame.KEY_POLLING_LOOP_TYPE);
+                    int onCount = type == PollingFrame.POLLING_LOOP_TYPE_ON ? 1 : 0;
+                    int offCount = type == PollingFrame.POLLING_LOOP_TYPE_OFF ? 1 : 0;
                     if (onCount == 1 || offCount == 1) {
                         for (Bundle frame : mPendingPollingLoopFrames) {
-                            type = frame.getChar(HostApduService.KEY_POLLING_LOOP_TYPE);
+                            type = frame.getInt(PollingFrame.KEY_POLLING_LOOP_TYPE);
                             switch (type) {
-                                case HostApduService.POLLING_LOOP_TYPE_ON:
+                                case PollingFrame.POLLING_LOOP_TYPE_ON:
                                     onCount++;
                                     break;
-                                case HostApduService.POLLING_LOOP_TYPE_OFF:
+                                case PollingFrame.POLLING_LOOP_TYPE_OFF:
                                     offCount++;
                                     break;
                                 default:
@@ -880,5 +883,15 @@ public class HostEmulationManager {
             return mActiveService.getBinder();
         }
         return null;
+    }
+
+    @VisibleForTesting
+    public ComponentName getServiceName(){
+        return mLastBoundPaymentServiceName;
+    }
+
+    @VisibleForTesting
+    public Boolean isServiceBounded(){
+        return mServiceBound;
     }
 }
