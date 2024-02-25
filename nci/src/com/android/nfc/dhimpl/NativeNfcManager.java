@@ -17,7 +17,7 @@
 package com.android.nfc.dhimpl;
 
 import android.content.Context;
-import android.nfc.cardemulation.HostApduService;
+import android.nfc.cardemulation.PollingFrame;
 import android.nfc.tech.Ndef;
 import android.nfc.tech.TagTechnology;
 import android.os.Bundle;
@@ -157,7 +157,7 @@ public class NativeNfcManager implements DeviceHost {
         }
 
         return mContext.getResources().getBoolean(
-            com.android.nfc.R.bool.config_nfcObserveModeSupported);
+            com.android.nfc.R.bool.nfc_observe_mode_supported);
     }
 
     @Override
@@ -415,16 +415,16 @@ public class NativeNfcManager implements DeviceHost {
         Bundle frame = new Bundle();
         final int header_len = 4;
         int pos = header_len;
-        final int TLV_header_len = 2;
+        final int TLV_header_len = 3;
         final int TLV_type_offset = 0;
-        final int TLV_len_offset = 1;
-        final int TLV_timestamp_offset = 2;
-        final int TLV_gain_offset = 6;
-        final int TLV_data_offset = 7;
+        final int TLV_len_offset = 2;
+        final int TLV_timestamp_offset = 3;
+        final int TLV_gain_offset = 7;
+        final int TLV_data_offset = 8;
         while (pos + TLV_len_offset < data_len) {
             int type = p_data[pos + TLV_type_offset];
             int length = p_data[pos + TLV_len_offset];
-            if (length < 5 ) {
+            if (length < 6 ) {
                 Log.e(TAG, "Length (" + length + ") is less than a polling frame, dropping.");
                 return;
             }
@@ -436,31 +436,31 @@ public class NativeNfcManager implements DeviceHost {
             }
             switch (type) {
                 case TAG_FIELD_CHANGE:
-                    frame.putChar(
-                            HostApduService.KEY_POLLING_LOOP_TYPE,
+                    frame.putInt(
+                            PollingFrame.KEY_POLLING_LOOP_TYPE,
                             p_data[pos + TLV_data_offset] != 0x00
-                                    ? HostApduService.POLLING_LOOP_TYPE_ON
-                                    : HostApduService.POLLING_LOOP_TYPE_OFF);
+                                    ? PollingFrame.POLLING_LOOP_TYPE_ON
+                                    : PollingFrame.POLLING_LOOP_TYPE_OFF);
                     break;
                 case TAG_NFC_A:
-                    frame.putChar(HostApduService.KEY_POLLING_LOOP_TYPE,
-                            HostApduService.POLLING_LOOP_TYPE_A);
+                    frame.putInt(PollingFrame.KEY_POLLING_LOOP_TYPE,
+                            PollingFrame.POLLING_LOOP_TYPE_A);
                     break;
                 case TAG_NFC_B:
-                    frame.putChar(HostApduService.KEY_POLLING_LOOP_TYPE,
-                            HostApduService.POLLING_LOOP_TYPE_B);
+                    frame.putInt(PollingFrame.KEY_POLLING_LOOP_TYPE,
+                            PollingFrame.POLLING_LOOP_TYPE_B);
                     break;
                 case TAG_NFC_F:
-                    frame.putChar(HostApduService.KEY_POLLING_LOOP_TYPE,
-                            HostApduService.POLLING_LOOP_TYPE_F);
+                    frame.putInt(PollingFrame.KEY_POLLING_LOOP_TYPE,
+                            PollingFrame.POLLING_LOOP_TYPE_F);
                     break;
                 case TAG_NFC_UNKNOWN:
-                    frame.putChar(
-                            HostApduService.KEY_POLLING_LOOP_TYPE,
-                            HostApduService.POLLING_LOOP_TYPE_UNKNOWN);
+                    frame.putInt(
+                            PollingFrame.KEY_POLLING_LOOP_TYPE,
+                            PollingFrame.POLLING_LOOP_TYPE_UNKNOWN);
 
                     frame.putByteArray(
-                            HostApduService.KEY_POLLING_LOOP_DATA,
+                            PollingFrame.KEY_POLLING_LOOP_DATA,
                             Arrays.copyOfRange(
                                     p_data, pos + TLV_data_offset, pos + TLV_header_len + length));
                     break;
@@ -469,19 +469,19 @@ public class NativeNfcManager implements DeviceHost {
             }
             if (pos + TLV_header_len + length <= data_len) {
                 frame.putByteArray(
-                        HostApduService.KEY_POLLING_LOOP_DATA,
+                        PollingFrame.KEY_POLLING_LOOP_DATA,
                         Arrays.copyOfRange(
                                 p_data, pos + TLV_data_offset,
                                 pos + TLV_header_len + length));
             }
             if (pos + TLV_gain_offset <= data_len) {
                 byte gain = p_data[pos + TLV_gain_offset];
-                frame.putByte(HostApduService.KEY_POLLING_LOOP_GAIN, gain);
+                frame.putByte(PollingFrame.KEY_POLLING_LOOP_GAIN, gain);
             }
             if (pos + TLV_timestamp_offset + 3 < data_len) {
                 int timestamp = ByteBuffer.wrap(p_data, pos + TLV_timestamp_offset, 4)
                         .order(ByteOrder.LITTLE_ENDIAN).getInt();
-                frame.putInt(HostApduService.KEY_POLLING_LOOP_TIMESTAMP, timestamp);
+                frame.putInt(PollingFrame.KEY_POLLING_LOOP_TIMESTAMP, timestamp);
             }
             pos += (TLV_header_len + length);
         }
@@ -506,4 +506,6 @@ public class NativeNfcManager implements DeviceHost {
 
     @Override
     public native void setTechnologyABRoute(int route);
+
+    private native byte[] getProprietaryCaps();
 }
