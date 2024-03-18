@@ -19,14 +19,15 @@ package com.android.nfc.cardemulation;
 import android.app.role.OnRoleHoldersChangedListener;
 import android.app.role.RoleManager;
 import android.content.Context;
+import android.os.Binder;
 import android.os.UserHandle;
+import android.permission.flags.Flags;
 import android.text.TextUtils;
 
 import java.util.List;
 
 public class WalletRoleObserver {
 
-    private static final String TAG = "WalletRoleObserver";
     public interface Callback {
         void onWalletRoleHolderChanged(String holder, int userId);
     }
@@ -53,15 +54,26 @@ public class WalletRoleObserver {
     }
 
     public String getDefaultWalletRoleHolder(int userId) {
-        if(!mRoleManager.isRoleAvailable(RoleManager.ROLE_WALLET)) {
-            return null;
+        final long token = Binder.clearCallingIdentity();
+        try {
+            if (!mRoleManager.isRoleAvailable(RoleManager.ROLE_WALLET)) {
+                return null;
+            }
+            List<String> roleHolders = mRoleManager.getRoleHoldersAsUser(RoleManager.ROLE_WALLET,
+                    UserHandle.of(userId));
+            return roleHolders.isEmpty() ? null : roleHolders.get(0);
+        } finally {
+            Binder.restoreCallingIdentity(token);
         }
-        List<String> roleHolders = mRoleManager.getRoleHoldersAsUser(RoleManager.ROLE_WALLET,
-                UserHandle.of(userId));
-        if(roleHolders.isEmpty()) {
-            return null;
+    }
+
+     boolean isWalletRoleFeatureEnabled() {
+        final long token = Binder.clearCallingIdentity();
+        try {
+            return Flags.walletRoleEnabled();
+        } finally {
+            Binder.restoreCallingIdentity(token);
         }
-        return roleHolders.get(0);
     }
 
     public void onUserSwitched(int userId) {

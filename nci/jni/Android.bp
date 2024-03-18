@@ -1,4 +1,5 @@
 package {
+    default_team: "trendy_team_fwk_nfc",
     default_applicable_licenses: ["Android-Apache-2.0"],
 }
 
@@ -31,7 +32,6 @@ cc_library_shared {
         "libcutils",
         "libutils",
         "liblog",
-        "libchrome",
         "libbase",
         // Treble configuration
         "libhidlbase",
@@ -49,17 +49,18 @@ cc_library_shared {
         "android.hardware.nfc-V1-ndk",
         "libnfcutils",
         "libnfc-nci",
+        "libnfc-nci_flags",
         "libstatslog_nfc",
         "android_nfc_flags_aconfig_c_lib",
         "server_configurable_flags",
-        "libxml2"
+        "libxml2",
     ],
 
     product_variables: {
         debuggable: {
             cflags: [
                 "-DDCHECK_ALWAYS_ON",
-                "-DDTA_ENABLED"
+                "-DDTA_ENABLED",
             ],
         },
     },
@@ -70,8 +71,8 @@ cc_library_shared {
     },
     stl: "libc++_static",
     apex_available: [
-         "//apex_available:platform",
-         "com.android.nfcservices"
+        "//apex_available:platform",
+        "com.android.nfcservices",
     ],
     required: [
         // Provide a default libnfc-nci.conf in /system/etc for devices that
@@ -97,7 +98,7 @@ cc_test {
     ],
 
     header_libs: [
-        "jni_headers"
+        "jni_headers",
     ],
 
     include_dirs: [

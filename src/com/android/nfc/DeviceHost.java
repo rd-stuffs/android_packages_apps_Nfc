@@ -211,6 +211,8 @@ public interface DeviceHost {
 
     public boolean setObserveMode(boolean enable);
 
+    public boolean isObserveModeEnabled();
+
     /**
     * Get the committed listen mode routing configuration
     */
@@ -247,4 +249,8 @@ public interface DeviceHost {
     */
     void setDiscoveryTech(int pollTech, int listenTech);
     void resetDiscoveryTech();
+    /**
+     * Sends Vendor NCI command
+     */
+    NfcVendorNciResponse sendRawVendorCmd(int mt, int gid, int oid, byte[] payload);
 }
