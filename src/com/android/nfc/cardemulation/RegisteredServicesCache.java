@@ -76,7 +76,8 @@ import java.util.concurrent.atomic.AtomicReference;
 public class RegisteredServicesCache {
     static final String XML_INDENT_OUTPUT_FEATURE = "http://xmlpull.org/v1/doc/features.html#indent-output";
     static final String TAG = "RegisteredServicesCache";
-    static final boolean DEBUG = NfcProperties.debug_enabled().orElse(false);
+    static final boolean DEBUG = NfcProperties.debug_enabled().orElse(true);
+    private static final boolean VDBG = false; // turn on for local testing.
 
     final Context mContext;
     final AtomicReference<BroadcastReceiver> mReceiver;
@@ -105,7 +106,7 @@ public class RegisteredServicesCache {
         public final int uid;
         public final HashMap<String, AidGroup> aidGroups = new HashMap<>();
         public String offHostSE;
-        public String defaultToObserveModeStr;
+        public String shouldDefaultToObserveModeStr;
 
         DynamicSettings(int uid) {
             this.uid = uid;
@@ -162,7 +163,7 @@ public class RegisteredServicesCache {
             public void onReceive(Context context, Intent intent) {
                 final int uid = intent.getIntExtra(Intent.EXTRA_UID, -1);
                 String action = intent.getAction();
-                if (DEBUG) Log.d(TAG, "Intent action: " + action);
+                if (VDBG) Log.d(TAG, "Intent action: " + action);
 
                 if (RoutingOptionManager.getInstance().isRoutingTableOverrided()) {
                     if (DEBUG) Log.d(TAG, "Routing table overrided. Skip invalidateCache()");
@@ -252,8 +253,14 @@ public class RegisteredServicesCache {
         mUserHandles.removeAll(removeUserHandles);
     }
 
-    void dump(ArrayList<ApduServiceInfo> services) {
+    void dump(List<ApduServiceInfo> services) {
         for (ApduServiceInfo service : services) {
+            if (DEBUG) Log.d(TAG, service.toString());
+        }
+    }
+
+    void dump(ArrayList<ComponentName> services) {
+        for (ComponentName service : services) {
             if (DEBUG) Log.d(TAG, service.toString());
         }
     }
@@ -365,6 +372,8 @@ public class RegisteredServicesCache {
         if (validServices == null) {
             return;
         }
+        ArrayList<ApduServiceInfo> toBeAdded = new ArrayList<>();
+        ArrayList<ApduServiceInfo> toBeRemoved = new ArrayList<>();
         synchronized (mLock) {
             UserServices userServices = findOrCreateUserLocked(userId);
 
@@ -375,18 +384,17 @@ public class RegisteredServicesCache {
                 Map.Entry<ComponentName, ApduServiceInfo> entry =
                         (Map.Entry<ComponentName, ApduServiceInfo>) it.next();
                 if (!containsServiceLocked(validServices, entry.getKey())) {
-                    Log.d(TAG, "Service removed: " + entry.getKey());
+                    toBeRemoved.add(entry.getValue());
                     it.remove();
                 }
             }
             for (ApduServiceInfo service : validServices) {
-                if (DEBUG) Log.d(TAG, "Adding service: " + service.getComponent() +
-                        " AIDs: " + service.getAids());
+                toBeAdded.add(service);
                 userServices.services.put(service.getComponent(), service);
             }
 
             // Apply dynamic settings mappings
-            ArrayList<ComponentName> toBeRemoved = new ArrayList<ComponentName>();
+            ArrayList<ComponentName> toBeRemovedComponent = new ArrayList<ComponentName>();
             for (Map.Entry<ComponentName, DynamicSettings> entry :
                     userServices.dynamicSettings.entrySet()) {
                 // Verify component / uid match
@@ -394,7 +402,7 @@ public class RegisteredServicesCache {
                 DynamicSettings dynamicSettings = entry.getValue();
                 ApduServiceInfo serviceInfo = userServices.services.get(component);
                 if (serviceInfo == null || (serviceInfo.getUid() != dynamicSettings.uid)) {
-                    toBeRemoved.add(component);
+                    toBeRemovedComponent.add(component);
                     continue;
                 } else {
                     for (AidGroup group : dynamicSettings.aidGroups.values()) {
@@ -403,15 +411,15 @@ public class RegisteredServicesCache {
                     if (dynamicSettings.offHostSE != null) {
                         serviceInfo.setOffHostSecureElement(dynamicSettings.offHostSE);
                     }
-                    if (dynamicSettings.defaultToObserveModeStr != null) {
-                        serviceInfo.setDefaultToObserveMode(
-                                convertValueToBoolean(dynamicSettings.defaultToObserveModeStr,
+                    if (dynamicSettings.shouldDefaultToObserveModeStr != null) {
+                        serviceInfo.setShouldDefaultToObserveMode(
+                                convertValueToBoolean(dynamicSettings.shouldDefaultToObserveModeStr,
                                 false));
                     }
                 }
             }
             if (toBeRemoved.size() > 0) {
-                for (ComponentName component : toBeRemoved) {
+                for (ComponentName component : toBeRemovedComponent) {
                     Log.d(TAG, "Removing dynamic AIDs registered by " + component);
                     userServices.dynamicSettings.remove(component);
                 }
@@ -426,11 +434,22 @@ public class RegisteredServicesCache {
 
         mCallback.onServicesUpdated(userId, Collections.unmodifiableList(validServices),
                 validateInstalled);
-        dump(validServices);
+        if (VDBG) {
+            Log.i(TAG, "Services => ");
+            dump(validServices);
+        } else {
+            // dump only new services added or removed
+            Log.i(TAG, "New Services => ");
+            dump(toBeAdded);
+            Log.i(TAG, "Removed Services => ");
+            dump(toBeRemoved);
+        }
     }
 
     private void invalidateOther(int userId, List<ApduServiceInfo> validOtherServices) {
         Log.d(TAG, "invalidate : " + userId);
+        ArrayList<ComponentName> toBeAdded = new ArrayList<>();
+        ArrayList<ComponentName> toBeRemoved = new ArrayList<>();
         // remove services
         synchronized (mLock) {
             UserServices userServices = findOrCreateUserLocked(userId);
@@ -442,7 +461,7 @@ public class RegisteredServicesCache {
                 Map.Entry<ComponentName, OtherServiceStatus> entry = it.next();
                 if (!containsServiceLocked((ArrayList<ApduServiceInfo>) validOtherServices,
                         entry.getKey())) {
-                    Log.d(TAG, "Service removed: " + entry.getKey());
+                    toBeRemoved.add(entry.getKey());
                     needToWrite = true;
                     it.remove();
                 }
@@ -459,8 +478,10 @@ public class RegisteredServicesCache {
             isChecked = true;
 
             for (ApduServiceInfo service : validOtherServices) {
-                Log.d(TAG, "update valid otherService: " + service.getComponent()
-                        + " AIDs: " + service.getAids());
+                if (VDBG) {
+                    Log.d(TAG, "update valid otherService: " + service.getComponent()
+                            + " AIDs: " + service.getAids());
+                }
                 if (!service.hasCategory(CardEmulation.CATEGORY_OTHER)) {
                     Log.e(TAG, "service does not have other category");
                     continue;
@@ -470,11 +491,9 @@ public class RegisteredServicesCache {
                 OtherServiceStatus status = userServices.others.get(component);
 
                 if (status == null) {
-                    Log.d(TAG, "New other service");
+                    toBeAdded.add(service.getComponent());
                     status = new OtherServiceStatus(service.getUid(), isChecked);
                     needToWrite = true;
-                } else {
-                    Log.d(TAG, "Existed other service");
                 }
                 service.setCategoryOtherServiceEnabled(status.checked);
                 userServices.others.put(component, status);
@@ -483,6 +502,16 @@ public class RegisteredServicesCache {
             if (needToWrite) {
                 writeOthersLocked();
             }
+        }
+        if (VDBG) {
+            Log.i(TAG, "Other Services => ");
+            dump(validOtherServices);
+        } else {
+            // dump only new services added or removed
+            Log.i(TAG, "New Other Services => ");
+            dump(toBeAdded);
+            Log.i(TAG, "Removed Other Services => ");
+            dump(toBeRemoved);
         }
     }
 
@@ -522,7 +551,7 @@ public class RegisteredServicesCache {
                 ComponentName currentComponent = null;
                 int currentUid = -1;
                 String currentOffHostSE = null;
-                String defaultToObserveModeStr = null;
+                String shouldDefaultToObserveModeStr = null;
                 ArrayList<AidGroup> currentGroups = new ArrayList<AidGroup>();
                 while (eventType != XmlPullParser.END_DOCUMENT) {
                     tagName = parser.getName();
@@ -531,8 +560,8 @@ public class RegisteredServicesCache {
                             String compString = parser.getAttributeValue(null, "component");
                             String uidString = parser.getAttributeValue(null, "uid");
                             String offHostString = parser.getAttributeValue(null, "offHostSE");
-                            defaultToObserveModeStr =
-                                parser.getAttributeValue(null, "defaultToObserveMode");
+                            shouldDefaultToObserveModeStr =
+                                parser.getAttributeValue(null, "shouldDefaultToObserveMode");
                             if (compString == null || uidString == null) {
                                 Log.e(TAG, "Invalid service attributes");
                             } else {
@@ -566,7 +595,7 @@ public class RegisteredServicesCache {
                                     dynSettings.aidGroups.put(group.getCategory(), group);
                                 }
                                 dynSettings.offHostSE = currentOffHostSE;
-                                dynSettings.defaultToObserveModeStr = defaultToObserveModeStr;
+                                dynSettings.shouldDefaultToObserveModeStr = shouldDefaultToObserveModeStr;
                                 UserServices services = findOrCreateUserLocked(userId);
                                 services.dynamicSettings.put(currentComponent, dynSettings);
                             }
@@ -689,9 +718,9 @@ public class RegisteredServicesCache {
                     if(service.getValue().offHostSE != null) {
                         out.attribute(null, "offHostSE", service.getValue().offHostSE);
                     }
-                    if (service.getValue().defaultToObserveModeStr != null) {
-                        out.attribute(null, "defaultToObserveMode",
-                                service.getValue().defaultToObserveModeStr);
+                    if (service.getValue().shouldDefaultToObserveModeStr != null) {
+                        out.attribute(null, "shouldDefaultToObserveMode",
+                                service.getValue().shouldDefaultToObserveModeStr);
                     }
                     for (AidGroup group : service.getValue().aidGroups.values()) {
                         group.writeAsXml(out);
@@ -856,7 +885,7 @@ public class RegisteredServicesCache {
         return true;
     }
 
-    public boolean setDefaultToObserveModeForService(int userId, int uid,
+    public boolean setShouldDefaultToObserveModeForService(int userId, int uid,
             ComponentName componentName, boolean enable) {
         synchronized (mLock) {
             UserServices services = findOrCreateUserLocked(userId);
@@ -874,21 +903,48 @@ public class RegisteredServicesCache {
                 Log.e(TAG, "UID mismatch.");
                 return false;
             }
-            serviceInfo.setDefaultToObserveMode(enable);
+            serviceInfo.setShouldDefaultToObserveMode(enable);
             DynamicSettings dynSettings = services.dynamicSettings.get(componentName);
             if (dynSettings == null) {
                 dynSettings = new DynamicSettings(uid);
                 dynSettings.offHostSE = null;
                 services.dynamicSettings.put(componentName, dynSettings);
             }
-            dynSettings.defaultToObserveModeStr =  Boolean.toString(enable);
+            dynSettings.shouldDefaultToObserveModeStr =  Boolean.toString(enable);
         }
         return true;
     }
 
-    @TargetApi(35)
     @FlaggedApi(android.nfc.Flags.FLAG_NFC_READ_POLLING_LOOP)
     public boolean registerPollingLoopFilterForService(int userId, int uid,
+            ComponentName componentName, String pollingLoopFilter,
+            boolean autoTransact) {
+        ArrayList<ApduServiceInfo> newServices = null;
+        synchronized (mLock) {
+            UserServices services = findOrCreateUserLocked(userId);
+            // Check if we can find this service
+            ApduServiceInfo serviceInfo = getService(userId, componentName);
+            if (serviceInfo == null) {
+                Log.e(TAG, "Service " + componentName + " does not exist.");
+                return false;
+            }
+            if (serviceInfo.getUid() != uid) {
+                // This is probably a good indication something is wrong here.
+                // Either newer service installed with different uid (but then
+                // we should have known about it), or somebody calling us from
+                // a different uid.
+                Log.e(TAG, "UID mismatch.");
+                return false;
+            }
+            serviceInfo.addPollingLoopFilter(pollingLoopFilter, autoTransact);
+            newServices = new ArrayList<ApduServiceInfo>(services.services.values());
+        }
+        mCallback.onServicesUpdated(userId, newServices, true);
+        return true;
+    }
+
+    @FlaggedApi(android.nfc.Flags.FLAG_NFC_READ_POLLING_LOOP)
+    public boolean removePollingLoopFilterForService(int userId, int uid,
             ComponentName componentName, String pollingLoopFilter) {
         ArrayList<ApduServiceInfo> newServices = null;
         synchronized (mLock) {
@@ -907,11 +963,62 @@ public class RegisteredServicesCache {
                 Log.e(TAG, "UID mismatch.");
                 return false;
             }
-            if (!CardEmulation.isValidPollingLoopFilter(pollingLoopFilter)) {
-                Log.e(TAG, "invalid polling loop filter");
+            serviceInfo.removePollingLoopFilter(pollingLoopFilter);
+            newServices = new ArrayList<ApduServiceInfo>(services.services.values());
+        }
+        mCallback.onServicesUpdated(userId, newServices, true);
+        return true;
+    }
+
+    @FlaggedApi(android.nfc.Flags.FLAG_NFC_READ_POLLING_LOOP)
+    public boolean registerPollingLoopPatternFilterForService(int userId, int uid,
+            ComponentName componentName, String pollingLoopPatternFilter,
+            boolean autoTransact) {
+        ArrayList<ApduServiceInfo> newServices = null;
+        synchronized (mLock) {
+            UserServices services = findOrCreateUserLocked(userId);
+            // Check if we can find this service
+            ApduServiceInfo serviceInfo = getService(userId, componentName);
+            if (serviceInfo == null) {
+                Log.e(TAG, "Service " + componentName + " does not exist.");
                 return false;
             }
-            serviceInfo.addPollingLoopFilter(pollingLoopFilter);
+            if (serviceInfo.getUid() != uid) {
+                // This is probably a good indication something is wrong here.
+                // Either newer service installed with different uid (but then
+                // we should have known about it), or somebody calling us from
+                // a different uid.
+                Log.e(TAG, "UID mismatch.");
+                return false;
+            }
+            serviceInfo.addPollingLoopPatternFilter(pollingLoopPatternFilter, autoTransact);
+            newServices = new ArrayList<ApduServiceInfo>(services.services.values());
+        }
+        mCallback.onServicesUpdated(userId, newServices, true);
+        return true;
+    }
+
+    @FlaggedApi(android.nfc.Flags.FLAG_NFC_READ_POLLING_LOOP)
+    public boolean removePollingLoopPatternFilterForService(int userId, int uid,
+            ComponentName componentName, String pollingLoopPatternFilter) {
+        ArrayList<ApduServiceInfo> newServices = null;
+        synchronized (mLock) {
+            UserServices services = findOrCreateUserLocked(userId);
+            // Check if we can find this service
+            ApduServiceInfo serviceInfo = getService(userId, componentName);
+            if (serviceInfo == null) {
+                Log.e(TAG, "Service " + componentName + " does not exist.");
+                return false;
+            }
+            if (serviceInfo.getUid() != uid) {
+                // This is probably a good indication something is wrong here.
+                // Either newer service installed with different uid (but then
+                // we should have known about it), or somebody calling us from
+                // a different uid.
+                Log.e(TAG, "UID mismatch.");
+                return false;
+            }
+            serviceInfo.removePollingLoopPatternFilter(pollingLoopPatternFilter);
             newServices = new ArrayList<ApduServiceInfo>(services.services.values());
         }
         mCallback.onServicesUpdated(userId, newServices, true);
@@ -1066,14 +1173,14 @@ public class RegisteredServicesCache {
         return success;
     }
 
-    boolean doesServiceDefaultToObserveMode(int userId, ComponentName service) {
+    boolean doesServiceShouldDefaultToObserveMode(int userId, ComponentName service) {
         UserServices services = findOrCreateUserLocked(userId);
         ApduServiceInfo serviceInfo = services.services.get(service);
         if (serviceInfo == null) {
             Log.d(TAG, "serviceInfo is null");
             return false;
         }
-        return serviceInfo.defaultToObserveMode();
+        return serviceInfo.shouldDefaultToObserveMode();
     }
 
     private boolean updateOtherServiceStatus(int userId, ApduServiceInfo service, boolean checked) {
