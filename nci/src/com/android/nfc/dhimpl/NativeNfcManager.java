@@ -422,7 +422,7 @@ public class NativeNfcManager implements DeviceHost {
         mListener.onHwErrorReported();
     }
 
-    private void notifyPollingLoopFrame(int data_len, byte[] p_data) {
+    public void notifyPollingLoopFrame(int data_len, byte[] p_data) {
         if (data_len < MIN_POLLING_FRAME_TLV_SIZE) {
             return;
         }
@@ -498,7 +498,7 @@ public class NativeNfcManager implements DeviceHost {
             }
             if (pos + TLV_timestamp_offset + 3 < data_len) {
                 int timestamp = ByteBuffer.wrap(p_data, pos + TLV_timestamp_offset, 4)
-                        .order(ByteOrder.LITTLE_ENDIAN).getInt();
+                        .order(ByteOrder.BIG_ENDIAN).getInt();
                 frame.putLong(PollingFrame.KEY_POLLING_LOOP_TIMESTAMP,
                         Integer.toUnsignedLong(timestamp));
             }
