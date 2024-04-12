@@ -69,6 +69,7 @@
     <uses-permission android:name="android.permission.MANAGE_ROLE_HOLDERS" />
     <uses-permission android:name="android.permission.OBSERVE_ROLE_HOLDERS"/>
     <uses-permission android:name="android.permission.DUMP"/>
+    <uses-permission android:name="android.permission.QUERY_CLONED_APPS"/>
 
     <application android:name=".NfcApplication"
                  android:icon="@drawable/icon"
@@ -83,6 +84,8 @@
                  android:supportsRtl="true"
                  android:hardwareAccelerated="false"
                  android:memtagMode="async"
+                 android:directBootAware="true"
+                 android:defaultToDeviceProtectedStorage="true"
     >
         <meta-data android:name="com.google.android.backup.api_key"
             android:value="AEdPqrEAAAAIbiKKs0wlimxeJ9y8iRIaBOH6aeb2IurmZyBHvg" />
@@ -132,6 +135,10 @@
         <activity android:name=".ConfirmConnectToWifiNetworkActivity"
             android:finishOnCloseSystemDialogs="true"
             android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:noHistory="true"
+        />
+        <activity android:name=".NfcEnableAllowlistActivity"
             android:theme="@android:style/Theme.Translucent.NoTitleBar"
             android:noHistory="true"
         />
