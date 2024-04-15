@@ -1212,6 +1212,10 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback 
                     if (!mIsAlwaysOnSupported || mIsRecovering
                             || (mAlwaysOnState != NfcAdapter.STATE_ON
                                 && mAlwaysOnState != NfcAdapter.STATE_TURNING_OFF)) {
+                        if (mIsRecovering) {
+                            // Recovering needs the full init. Put default value
+                            mAlwaysOnState = NfcAdapter.STATE_OFF;
+                        }
                         if (!mDeviceHost.initialize()) {
                             Log.w(TAG, "Error enabling NFC");
                             updateState(NfcAdapter.STATE_OFF);
@@ -3632,6 +3636,9 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback 
                     break;
 
                 case MSG_RF_FIELD_ACTIVATED:
+                    if (mCardEmulationManager != null) {
+                        mCardEmulationManager.onFieldChangeDetected(true);
+                    }
                     Intent fieldOnIntent = new Intent(ACTION_RF_FIELD_ON_DETECTED);
                     sendNfcPermissionProtectedBroadcast(fieldOnIntent);
                     if (mIsSecureNfcEnabled) {
@@ -3639,6 +3646,9 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback 
                     }
                     break;
                 case MSG_RF_FIELD_DEACTIVATED:
+                    if (mCardEmulationManager != null) {
+                        mCardEmulationManager.onFieldChangeDetected(false);
+                    }
                     Intent fieldOffIntent = new Intent(ACTION_RF_FIELD_OFF_DETECTED);
                     sendNfcPermissionProtectedBroadcast(fieldOffIntent);
                     break;
