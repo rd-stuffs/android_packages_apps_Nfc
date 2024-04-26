@@ -19,6 +19,10 @@
 
 package com.android.nfc;
 
+import static com.android.nfc.NfcStatsLog.NFC_OBSERVE_MODE_STATE_CHANGED__TRIGGER_SOURCE__FOREGROUND_APP;
+import static com.android.nfc.NfcStatsLog.NFC_OBSERVE_MODE_STATE_CHANGED__TRIGGER_SOURCE__TRIGGER_SOURCE_UNKNOWN;
+import static com.android.nfc.NfcStatsLog.NFC_OBSERVE_MODE_STATE_CHANGED__TRIGGER_SOURCE__WALLET_ROLE_HOLDER;
+
 import android.annotation.NonNull;
 import android.app.ActivityManager;
 import android.app.Application;
@@ -483,17 +487,25 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback 
     @Override
     public void onRemoteFieldActivated() {
         sendMessage(NfcService.MSG_RF_FIELD_ACTIVATED, null);
+
+        if (mStatsdUtils != null) {
+            mStatsdUtils.logFieldChanged(true, 0);
+        }
     }
 
     @Override
     public void onRemoteFieldDeactivated() {
         sendMessage(NfcService.MSG_RF_FIELD_DEACTIVATED, null);
+
+        if (mStatsdUtils != null) {
+            mStatsdUtils.logFieldChanged(false, 0);
+        }
     }
 
     @Override
-    public void onPollingLoopDetected(List<Bundle> pollingFrames) {
-        if (mCardEmulationManager != null) {
-            mCardEmulationManager.onPollingLoopDetected(pollingFrames);
+    public void onPollingLoopDetected(List<PollingFrame> frames) {
+        if (mCardEmulationManager != null && android.nfc.Flags.nfcReadPollingLoop()) {
+            mCardEmulationManager.onPollingLoopDetected(frames);
         }
     }
 
@@ -1650,6 +1662,9 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback 
             long token = Binder.clearCallingIdentity();
             boolean isWalletRoleEnabled = false;
             String defaultWalletPackage = null;
+            int triggerSource =
+                    NFC_OBSERVE_MODE_STATE_CHANGED__TRIGGER_SOURCE__TRIGGER_SOURCE_UNKNOWN;
+
             try {
                 if (!android.nfc.Flags.nfcObserveMode()) {
                     return false;
@@ -1668,6 +1683,11 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback 
                 if (isWalletRoleEnabled) {
                     privilegedCaller = (isPrivileged(callingUid)
                             || packageName.equals(defaultWalletPackage));
+
+                    if (privilegedCaller) {
+                        triggerSource =
+                                NFC_OBSERVE_MODE_STATE_CHANGED__TRIGGER_SOURCE__WALLET_ROLE_HOLDER;
+                    }
                 } else {
                     String defaultPaymentService = Settings.Secure.getString(
                             mContext.createContextAsUser(user, 0).getContentResolver(),
@@ -1689,7 +1709,15 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback 
                     Log.e(TAG, "setObserveMode: Caller not in foreground.");
                     return false;
                 }
+                triggerSource =
+                        NFC_OBSERVE_MODE_STATE_CHANGED__TRIGGER_SOURCE__FOREGROUND_APP;
             }
+
+            if (mStatsdUtils != null) {
+                mStatsdUtils.logObserveModeStateChanged(enable, triggerSource,
+                        0 /* TODO(b/334983405) measure latency */);
+            }
+
             return mDeviceHost.setObserveMode(enable);
         }
 
@@ -2328,14 +2356,14 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback 
         }
 
         @Override
-        public void notifyPollingLoop(Bundle frame) {
+        public void notifyPollingLoop(PollingFrame frame) {
             try {
                 byte[] data;
-                int type = frame.getInt(PollingFrame.KEY_POLLING_LOOP_TYPE);
-                int gain = frame.getInt(PollingFrame.KEY_POLLING_LOOP_GAIN, -1);
-                byte[] frame_data = frame.getByteArray(PollingFrame.KEY_POLLING_LOOP_DATA);
+                int type = frame.getType();
+                int gain = frame.getVendorSpecificGain();
+                byte[] frame_data = frame.getData();
 
-                long timestamp = frame.getLong(PollingFrame.KEY_POLLING_LOOP_TIMESTAMP);
+                long timestamp = frame.getTimestamp();
                 HexFormat format = HexFormat.ofDelimiter(" ");
                 String timestampBytes = format.formatHex(new byte[] {
                         (byte) (timestamp >>> 24),
