@@ -41,6 +41,7 @@ import android.sysprop.NfcProperties;
 import android.text.TextUtils;
 import android.util.AtomicFile;
 import android.util.Log;
+import android.util.Pair;
 import android.util.SparseArray;
 import android.util.Xml;
 import android.util.proto.ProtoOutputStream;
@@ -49,6 +50,7 @@ import androidx.annotation.VisibleForTesting;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.util.FastXmlSerializer;
+import com.android.nfc.Utils;
 
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
@@ -61,6 +63,7 @@ import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -240,28 +243,31 @@ public class RegisteredServicesCache {
                 if (RoutingOptionManager.getInstance().isRoutingTableOverrided()) {
                     if (DEBUG) Log.d(TAG, "Routing table overrided. Skip invalidateCache()");
                 }
-
-                if (uid != -1) {
-                    boolean replaced = intent.getBooleanExtra(Intent.EXTRA_REPLACING, false) &&
-                            (Intent.ACTION_PACKAGE_ADDED.equals(action) ||
-                                    Intent.ACTION_PACKAGE_REMOVED.equals(action));
-                    if (!replaced) {
-                        int currentUser = ActivityManager.getCurrentUser();
-                        if (currentUser == getProfileParentId(UserHandle.
-                                getUserHandleForUid(uid).getIdentifier())) {
-                            if (Intent.ACTION_PACKAGE_REMOVED.equals(action)) {
-                                invalidateCache(UserHandle.
-                                        getUserHandleForUid(uid).getIdentifier(), true);
-                            } else {
-                                invalidateCache(UserHandle.
-                                        getUserHandleForUid(uid).getIdentifier(), false);
-                            }
-                        } else {
-                            // Cache will automatically be updated on user switch
-                        }
+                if (uid == -1) return;
+                int userId = UserHandle.getUserHandleForUid(uid).getIdentifier();
+                int currentUser = ActivityManager.getCurrentUser();
+                if (currentUser != getProfileParentId(userId)) {
+                    // Cache will automatically be updated on user switch
+                    if (VDBG) Log.d(TAG, "Ignoring package change intent from non-current user");
+                    return;
+                }
+                if (!Utils.hasCeServicesWithValidPermissions(mContext, intent, userId)) {
+                    if (VDBG) Log.d(TAG, "Ignoring package change intent from non-CE app");
+                    return;
+                }
+                boolean replaced = intent.getBooleanExtra(Intent.EXTRA_REPLACING, false)
+                        && (Intent.ACTION_PACKAGE_ADDED.equals(action)
+                        || Intent.ACTION_PACKAGE_REMOVED.equals(action));
+                if (!replaced) {
+                    if (Intent.ACTION_PACKAGE_REMOVED.equals(action)) {
+                        invalidateCache(UserHandle.
+                                getUserHandleForUid(uid).getIdentifier(), true);
                     } else {
-                        if (DEBUG) Log.d(TAG, "Ignoring package intent due to package being replaced.");
+                        invalidateCache(UserHandle.
+                                getUserHandleForUid(uid).getIdentifier(), false);
                     }
+                } else {
+                    if (DEBUG) Log.d(TAG, "Ignoring package intent due to package being replaced.");
                 }
             }
         };
@@ -601,14 +607,19 @@ public class RegisteredServicesCache {
         return result;
     }
 
-    private void readDynamicSettingsLocked() {
+    @VisibleForTesting
+    static Map<Integer, List<Pair<ComponentName, DynamicSettings>>>
+    readDynamicSettingsFromFile(SettingsFile settingsFile) {
+        Log.d(TAG, "Reading dynamic AIDs.");
+        Map<Integer, List<Pair<ComponentName, DynamicSettings>>> readSettingsMap =
+                new HashMap<>();
         InputStream fis = null;
         try {
-            if (!mDynamicSettingsFile.exists()) {
+            if (!settingsFile.exists()) {
                 Log.d(TAG, "Dynamic AIDs file does not exist.");
-                return;
+                return new HashMap<>();
             }
-            fis = mDynamicSettingsFile.openRead();
+            fis = settingsFile.openRead();
             XmlPullParser parser = Xml.newPullParser();
             parser.setInput(fis, null);
             int eventType = parser.getEventType();
@@ -630,15 +641,17 @@ public class RegisteredServicesCache {
                         if ("service".equals(tagName) && parser.getDepth() == 2) {
                             String compString = parser.getAttributeValue(null, "component");
                             String uidString = parser.getAttributeValue(null, "uid");
-                            String offHostString = parser.getAttributeValue(null, "offHostSE");
+                            String offHostString
+                                    = parser.getAttributeValue(null, "offHostSE");
                             shouldDefaultToObserveModeStr =
-                                parser.getAttributeValue(null, "shouldDefaultToObserveMode");
+                                    parser.getAttributeValue(null, "shouldDefaultToObserveMode");
                             if (compString == null || uidString == null) {
                                 Log.e(TAG, "Invalid service attributes");
                             } else {
                                 try {
                                     currentUid = Integer.parseInt(uidString);
-                                    currentComponent = ComponentName.unflattenFromString(compString);
+                                    currentComponent = ComponentName
+                                            .unflattenFromString(compString);
                                     currentOffHostSE = offHostString;
                                     inService = true;
                                 } catch (NumberFormatException e) {
@@ -667,9 +680,13 @@ public class RegisteredServicesCache {
                                     dynSettings.aidGroups.put(group.getCategory(), group);
                                 }
                                 dynSettings.offHostSE = currentOffHostSE;
-                                dynSettings.shouldDefaultToObserveModeStr = shouldDefaultToObserveModeStr;
-                                UserServices services = findOrCreateUserLocked(userId);
-                                services.dynamicSettings.put(currentComponent, dynSettings);
+                                dynSettings.shouldDefaultToObserveModeStr
+                                        = shouldDefaultToObserveModeStr;
+                                if (!readSettingsMap.containsKey(userId)) {
+                                    readSettingsMap.put(userId, new ArrayList<>());
+                                }
+                                readSettingsMap.get(userId)
+                                        .add(new Pair<>(currentComponent, dynSettings));
                             }
                             currentUid = -1;
                             currentComponent = null;
@@ -683,7 +700,7 @@ public class RegisteredServicesCache {
             }
         } catch (Exception e) {
             Log.e(TAG, "Could not parse dynamic AIDs file, trashing.", e);
-            mDynamicSettingsFile.delete();
+            settingsFile.delete();
         } finally {
             if (fis != null) {
                 try {
@@ -692,18 +709,39 @@ public class RegisteredServicesCache {
                 }
             }
         }
+        return readSettingsMap;
     }
 
-    private void readOthersLocked() {
+    private void readDynamicSettingsLocked() {
+        Map<Integer, List<Pair<ComponentName, DynamicSettings>>> readSettingsMap
+                = readDynamicSettingsFromFile(mDynamicSettingsFile);
+        for(Integer userId: readSettingsMap.keySet()) {
+            UserServices services = findOrCreateUserLocked(userId);
+            List<Pair<ComponentName, DynamicSettings>> componentNameDynamicServiceStatusPairs
+                    = readSettingsMap.get(userId);
+            int pairsSize = componentNameDynamicServiceStatusPairs.size();
+            for(int i = 0; i < pairsSize; i++) {
+                Pair<ComponentName, DynamicSettings> pair
+                        = componentNameDynamicServiceStatusPairs.get(i);
+                services.dynamicSettings.put(pair.first, pair.second);
+            }
+        }
+    }
+
+    @VisibleForTesting
+    static Map<Integer, List<Pair<ComponentName, OtherServiceStatus>>>
+    readOtherFromFile(SettingsFile settingsFile) {
+        Map<Integer, List<Pair<ComponentName, OtherServiceStatus>>> readSettingsMap =
+                new HashMap<>();
         Log.d(TAG, "read others locked");
 
         InputStream fis = null;
         try {
-            if (!mOthersFile.exists()) {
-                Log.d(TAG, "Dynamic AIDs file does not exist.");
-                return;
+            if (!settingsFile.exists()) {
+                Log.d(TAG, "Other settings file does not exist.");
+                return new HashMap<>();
             }
-            fis = mOthersFile.openRead();
+            fis = settingsFile.openRead();
             XmlPullParser parser = Xml.newPullParser();
             parser.setInput(fis, null);
             int eventType = parser.getEventType();
@@ -743,12 +781,15 @@ public class RegisteredServicesCache {
                             if (currentComponent != null && currentUid >= 0) {
                                 Log.d(TAG, " end of service tag");
                                 final int userId =
-                                    UserHandle.getUserHandleForUid(currentUid).getIdentifier();
+                                        UserHandle.getUserHandleForUid(currentUid).getIdentifier();
                                 OtherServiceStatus status =
                                         new OtherServiceStatus(currentUid, checked);
                                 Log.d(TAG, " ## user id - " + userId);
-                                UserServices services = findOrCreateUserLocked(userId);
-                                services.others.put(currentComponent, status);
+                                if (!readSettingsMap.containsKey(userId)) {
+                                    readSettingsMap.put(userId, new ArrayList<>());
+                                }
+                                readSettingsMap.get(userId)
+                                        .add(new Pair<>(currentComponent, status));
                             }
                             currentUid = -1;
                             currentComponent = null;
@@ -760,7 +801,7 @@ public class RegisteredServicesCache {
             }
         } catch (Exception e) {
             Log.e(TAG, "Could not parse others AIDs file, trashing.", e);
-            mOthersFile.delete();
+            settingsFile.delete();
         } finally {
             if (fis != null) {
                 try {
@@ -770,7 +811,26 @@ public class RegisteredServicesCache {
                 }
             }
         }
+        return readSettingsMap;
     }
+
+    private void readOthersLocked() {
+        Map<Integer, List<Pair<ComponentName, OtherServiceStatus>>> readSettingsMap
+                = readOtherFromFile(mOthersFile);
+        for(Integer userId: readSettingsMap.keySet()) {
+            UserServices services = findOrCreateUserLocked(userId);
+            List<Pair<ComponentName, OtherServiceStatus>> componentNameOtherServiceStatusPairs
+                    = readSettingsMap.get(userId);
+            int pairsSize = componentNameOtherServiceStatusPairs.size();
+            for(int i = 0; i < pairsSize; i++) {
+                Pair<ComponentName, OtherServiceStatus> pair
+                        = componentNameOtherServiceStatusPairs.get(i);
+                services.others.put(pair.first,
+                        pair.second);
+            }
+        }
+    }
+
     private boolean writeDynamicSettingsLocked() {
         FileOutputStream fos = null;
         try {
