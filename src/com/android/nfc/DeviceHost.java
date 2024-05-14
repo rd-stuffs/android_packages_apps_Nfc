@@ -18,6 +18,7 @@ package com.android.nfc;
 
 import android.annotation.Nullable;
 import android.nfc.NdefMessage;
+import android.nfc.cardemulation.PollingFrame;
 import android.os.Bundle;
 
 import java.io.FileDescriptor;
@@ -44,7 +45,7 @@ public interface DeviceHost {
 
         public void onHwErrorReported();
 
-        public void onPollingLoopDetected(List<Bundle> pollingFrames);
+        public void onPollingLoopDetected(List<PollingFrame> pollingFrames);
 
         public void onWlcStopped(int wpt_end_condition);
 
@@ -100,15 +101,6 @@ public interface DeviceHost {
     }
 
     public interface NfcDepEndpoint {
-
-        /**
-         * Peer-to-Peer Target
-         */
-        public static final short MODE_P2P_TARGET = 0x00;
-        /**
-         * Peer-to-Peer Initiator
-         */
-        public static final short MODE_P2P_INITIATOR = 0x01;
         /**
          * Invalid target mode
          */
@@ -182,10 +174,6 @@ public interface DeviceHost {
 
     public int getAidTableSize();
 
-    void setP2pInitiatorModes(int modes);
-
-    void setP2pTargetModes(int modes);
-
     boolean getExtendedLengthApdusSupported();
 
     void dump(FileDescriptor fd);
@@ -207,8 +195,6 @@ public interface DeviceHost {
     public void shutdown();
 
     public boolean setNfcSecure(boolean enable);
-
-    public String getNfaStorageDir();
 
     public boolean isObserveModeSupported();
 
