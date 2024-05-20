@@ -131,12 +131,15 @@ public class RegisteredNfcFServicesCache {
         return userServices;
     }
 
-    private int getProfileParentId(int userId) {
-        UserManager um = mContext.createContextAsUser(
-                UserHandle.of(userId), /*flags=*/0)
-                .getSystemService(UserManager.class);
+    private int getProfileParentId(Context context, int userId) {
+        UserManager um = context.getSystemService(UserManager.class);
         UserHandle uh = um.getProfileParent(UserHandle.of(userId));
         return uh == null ? userId : uh.getIdentifier();
+    }
+
+    private int getProfileParentId(int userId) {
+        return getProfileParentId(mContext.createContextAsUser(
+                UserHandle.of(userId), /*flags=*/0), userId);
     }
 
     public RegisteredNfcFServicesCache(Context context, Callback callback) {
@@ -159,12 +162,14 @@ public class RegisteredNfcFServicesCache {
                 if (uid == -1) return;
                 int userId = UserHandle.getUserHandleForUid(uid).getIdentifier();
                 int currentUser = ActivityManager.getCurrentUser();
-                if (currentUser != getProfileParentId(userId)) {
+                if (currentUser != getProfileParentId(context, userId)) {
                     // Cache will automatically be updated on user switch
                     if (VDBG) Log.d(TAG, "Ignoring package change intent from non-current user");
                     return;
                 }
-                if (!Utils.hasCeServicesWithValidPermissions(mContext, intent, userId)) {
+                // If app not removed, check if the app has any valid CE services.
+                if (!Intent.ACTION_PACKAGE_REMOVED.equals(action) &&
+                        !Utils.hasCeServicesWithValidPermissions(mContext, intent, userId)) {
                     if (VDBG) Log.d(TAG, "Ignoring package change intent from non-CE app");
                     return;
                 }
