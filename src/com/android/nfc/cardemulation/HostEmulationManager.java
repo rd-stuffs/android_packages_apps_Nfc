@@ -176,6 +176,7 @@ public class HostEmulationManager {
     public void onPreferredPaymentServiceChanged(int userId, final ComponentName service) {
         mHandler.post(() -> {
             synchronized (mLock) {
+                resetActiveService();
                 if (service != null) {
                     bindPaymentServiceLocked(userId, service);
                 } else {
@@ -283,8 +284,10 @@ public class HostEmulationManager {
                             pollingFrame.setTriggeredAutoTransact(true);
                         }
                         UserHandle user = UserHandle.getUserHandleForUid(serviceInfo.getUid());
-                        service = bindServiceIfNeededLocked(user.getIdentifier(),
-                                serviceInfo.getComponent());
+                        if (serviceInfo.isOnHost()) {
+                            service = bindServiceIfNeededLocked(user.getIdentifier(),
+                                    serviceInfo.getComponent());
+                        }
                     } else {
                         service = getForegroundServiceOrDefault();
                     }
@@ -301,7 +304,7 @@ public class HostEmulationManager {
             if (service == null) {
                 if (mActiveService != null) {
                         service = mActiveService;
-                } else if (mPendingPollingLoopFrames.size() >= 4) {
+                } else if (mPendingPollingLoopFrames.size() >= 3) {
                     loop_on_off: for (PollingFrame frame : mPendingPollingLoopFrames) {
                         int type = frame.getType();
                         switch (type) {
@@ -332,7 +335,7 @@ public class HostEmulationManager {
         Log.d(TAG, "disabling observe mode for one transaction.");
         mEnableObserveModeAfterTransaction = true;
         NfcAdapter adapter = NfcAdapter.getDefaultAdapter(mContext);
-        adapter.setObserveModeEnabled(false);
+        mHandler.post(() -> adapter.setObserveModeEnabled(false));
     }
 
     /**
@@ -340,6 +343,7 @@ public class HostEmulationManager {
      */
     public void onPreferredForegroundServiceChanged(int userId, ComponentName service) {
         synchronized (mLock) {
+            resetActiveService();
             if (service != null) {
                 bindServiceIfNeededLocked(userId, service);
             } else {
@@ -354,7 +358,7 @@ public class HostEmulationManager {
             mEnableObserveModeAfterTransaction = false;
             mEnableObserveModeOnFieldOff = false;
             NfcAdapter adapter = NfcAdapter.getDefaultAdapter(mContext);
-            adapter.setObserveModeEnabled(true);
+            mHandler.post(() -> adapter.setObserveModeEnabled(true));
         }
     }
 
@@ -592,9 +596,7 @@ public class HostEmulationManager {
                 Log.e(TAG, "Got deactivation event while in idle state");
             }
             sendDeactivateToActiveServiceLocked(HostApduService.DEACTIVATION_LINK_LOSS);
-            mActiveService = null;
-            mActiveServiceName = null;
-            mActiveServiceUserId = -1;
+            resetActiveService();
             mPendingPollingLoopFrames = null;
             unbindServiceIfNeededLocked();
             mState = STATE_IDLE;
@@ -603,7 +605,7 @@ public class HostEmulationManager {
                 Log.d(TAG, "re-enabling observe mode after HCE deactivation");
                 mEnableObserveModeAfterTransaction = false;
                 NfcAdapter adapter = NfcAdapter.getDefaultAdapter(mContext);
-                adapter.setObserveModeEnabled(true);
+                mHandler.post(() -> adapter.setObserveModeEnabled(true));
             }
 
             if (mStatsdUtils != null) {
@@ -624,9 +626,7 @@ public class HostEmulationManager {
                 Log.i(TAG, "OffHost AID selected, waiting for Field off to reenable observe mode");
                 mEnableObserveModeOnFieldOff = true;
             }
-            mActiveService = null;
-            mActiveServiceName = null;
-            mActiveServiceUserId = -1;
+            resetActiveService();
             unbindServiceIfNeededLocked();
             mState = STATE_W4_SELECT;
 
@@ -834,6 +834,12 @@ public class HostEmulationManager {
             return bytesToString(data, SELECT_APDU_HDR_LENGTH, aidLength);
         }
         return null;
+    }
+
+    private void resetActiveService() {
+        mActiveService = null;
+        mActiveServiceName = null;
+        mActiveServiceUserId = -1;
     }
 
     private ServiceConnection mPaymentConnection = new ServiceConnection() {

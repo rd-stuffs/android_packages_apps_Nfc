@@ -20,17 +20,21 @@ import static com.android.nfc.NfcService.PREF_NFC_ON;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import android.app.ActivityManager;
+import android.app.AlarmManager;
 import android.app.Application;
 import android.app.KeyguardManager;
 import android.app.backup.BackupManager;
@@ -40,7 +44,9 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.res.Resources;
+import android.nfc.NfcAdapter;
 import android.nfc.NfcServiceManager;
+import android.nfc.tech.Ndef;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Handler;
@@ -48,12 +54,14 @@ import android.os.HandlerExecutor;
 import android.os.PowerManager;
 import android.os.UserManager;
 import android.os.test.TestLooper;
-import android.telephony.TelephonyManager;
 
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 
 
+import com.android.dx.mockito.inline.extended.ExtendedMockito;
+
 import org.junit.After;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -62,6 +70,9 @@ import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.mockito.MockitoSession;
+import org.mockito.quality.Strictness;
+
+import java.util.Optional;
 
 @RunWith(AndroidJUnit4.class)
 public final class NfcServiceTest {
@@ -87,8 +98,10 @@ public final class NfcServiceTest {
     @Mock ContentResolver mContentResolver;
     @Mock Bundle mUserRestrictions;
     @Mock BackupManager mBackupManager;
+    @Mock AlarmManager mAlarmManager;
     @Captor ArgumentCaptor<DeviceHost.DeviceHostListener> mDeviceHostListener;
     @Captor ArgumentCaptor<BroadcastReceiver> mGlobalReceiver;
+    @Captor ArgumentCaptor<AlarmManager.OnAlarmListener> mAlarmListener;
     TestLooper mLooper;
     NfcService mNfcService;
     private MockitoSession mStaticMockSession;
@@ -114,6 +127,7 @@ public final class NfcServiceTest {
         when(mApplication.getSystemService(UserManager.class)).thenReturn(mUserManager);
         when(mApplication.getSystemService(ActivityManager.class)).thenReturn(mActivityManager);
         when(mApplication.getSystemService(KeyguardManager.class)).thenReturn(mKeyguardManager);
+        when(mApplication.getSystemService(AlarmManager.class)).thenReturn(mAlarmManager);
         when(mApplication.getPackageManager()).thenReturn(mPackageManager);
         when(mApplication.getResources()).thenReturn(mResources);
         when(mApplication.createContextAsUser(any(), anyInt())).thenReturn(mApplication);
@@ -133,10 +147,11 @@ public final class NfcServiceTest {
     private void createNfcService() {
         mNfcService = new NfcService(mApplication, mNfcInjector);
         mLooper.dispatchAll();
-        verify(mNfcInjector, atLeastOnce()).makeDeviceHost(mDeviceHostListener.capture());
-        verify(mApplication, atLeastOnce()).registerReceiverForAllUsers(
+        verify(mNfcInjector).makeDeviceHost(mDeviceHostListener.capture());
+        verify(mApplication).registerReceiverForAllUsers(
                 mGlobalReceiver.capture(),
                 argThat(intent -> intent.hasAction(Intent.ACTION_SCREEN_ON)), any(), any());
+        clearInvocations(mDeviceHost, mNfcInjector, mApplication);
     }
 
     private void enableAndVerify() throws Exception {
@@ -146,6 +161,7 @@ public final class NfcServiceTest {
         verify(mPreferencesEditor).putBoolean(PREF_NFC_ON, true);
         mLooper.dispatchAll();
         verify(mDeviceHost).initialize();
+        clearInvocations(mDeviceHost, mPreferencesEditor);
     }
 
     private void disableAndVerify() throws Exception {
@@ -155,7 +171,10 @@ public final class NfcServiceTest {
         verify(mPreferencesEditor).putBoolean(PREF_NFC_ON, false);
         mLooper.dispatchAll();
         verify(mDeviceHost).deinitialize();
+        verify(mNfcDispatcher).resetForegroundDispatch();
+        clearInvocations(mDeviceHost, mPreferencesEditor, mNfcDispatcher);
     }
+
 
     @Test
     public void testEnable() throws Exception {
@@ -163,18 +182,73 @@ public final class NfcServiceTest {
     }
 
     @Test
-    public void testSimStateChange() throws Exception {
-        when(mResources.getBoolean(R.bool.restart_on_sim_change)).thenReturn(true);
+    public void testDisable() throws Exception {
+        enableAndVerify();
+        disableAndVerify();
+    }
+
+    @Test
+    public void testBootupWithNfcOn() throws Exception {
+        when(mPreferences.getBoolean(eq(PREF_NFC_ON), anyBoolean())).thenReturn(true);
+        mNfcService = new NfcService(mApplication, mNfcInjector);
+        mLooper.dispatchAll();
+        verify(mNfcInjector).makeDeviceHost(mDeviceHostListener.capture());
+        verify(mApplication).registerReceiverForAllUsers(
+                mGlobalReceiver.capture(),
+                argThat(intent -> intent.hasAction(Intent.ACTION_SCREEN_ON)), any(), any());
+        verify(mDeviceHost).initialize();
+    }
+
+    @Test
+    public void testBootupWithNfcOn_WhenOemExtensionEnabled() throws Exception {
+        when(mResources.getBoolean(R.bool.enable_oem_extension)).thenReturn(true);
         createNfcService();
 
-        Intent intent = new Intent(TelephonyManager.ACTION_SIM_APPLICATION_STATE_CHANGED)
-                .putExtra(TelephonyManager.EXTRA_SIM_STATE, TelephonyManager.SIM_STATE_LOADED);
-        mGlobalReceiver.getValue().onReceive(mApplication, intent);
-        verify(mNfcInjector).killNfcStack();
+        verifyNoMoreInteractions(mDeviceHost);
+    }
 
-        intent = new Intent(TelephonyManager.ACTION_SIM_APPLICATION_STATE_CHANGED)
-                .putExtra(TelephonyManager.EXTRA_SIM_STATE, TelephonyManager.SIM_STATE_UNKNOWN);
-        mGlobalReceiver.getValue().onReceive(mApplication, intent);
-        verify(mNfcInjector, times(2)).killNfcStack();
+    @Test
+    public void testBootupWithNfcOn_WhenOemExtensionEnabled_ThenAllowBoot() throws Exception {
+        when(mPreferences.getBoolean(eq(PREF_NFC_ON), anyBoolean())).thenReturn(true);
+        when(mResources.getBoolean(R.bool.enable_oem_extension)).thenReturn(true);
+        createNfcService();
+
+        mNfcService.mNfcAdapter.allowBoot();
+        mLooper.dispatchAll();
+        verify(mDeviceHost).initialize();
+    }
+
+    @Test
+    public void testBootupWithNfcOn_WhenOemExtensionEnabled_ThenTimeout() throws Exception {
+        when(mPreferences.getBoolean(eq(PREF_NFC_ON), anyBoolean())).thenReturn(true);
+        when(mResources.getBoolean(R.bool.enable_oem_extension)).thenReturn(true);
+        createNfcService();
+        verify(mAlarmManager).setExact(
+                anyInt(), anyLong(), anyString(), mAlarmListener.capture(), any());
+
+        mAlarmListener.getValue().onAlarm();
+        mLooper.dispatchAll();
+        verify(mDeviceHost).initialize();
+    }
+
+    @Test
+    public void testSetObserveMode_nfcDisabled() throws Exception {
+        mNfcService.mNfcAdapter.disable(true, PKG_NAME);
+
+        Assert.assertFalse(mNfcService.mNfcAdapter.setObserveMode(true));
+    }
+
+    @Test
+    public void testIsObserveModeEnabled_nfcDisabled() throws Exception {
+        mNfcService.mNfcAdapter.disable(true, PKG_NAME);
+
+        Assert.assertFalse(mNfcService.mNfcAdapter.isObserveModeEnabled());
+    }
+
+    @Test
+    public void testIsObserveModeSupported_nfcDisabled() throws Exception {
+        mNfcService.mNfcAdapter.disable(true, PKG_NAME);
+
+        Assert.assertFalse(mNfcService.mNfcAdapter.isObserveModeSupported());
     }
 }
