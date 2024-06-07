@@ -1232,11 +1232,6 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback 
                 watchDog.cancel();
             }
 
-            if (mIsHceCapable) {
-                // Generate the initial card emulation routing table
-                mCardEmulationManager.onNfcEnabled();
-            }
-
             mSkipNdefRead = NfcProperties.skipNdefRead().orElse(false);
             nci_version = getNciVersion();
             Log.d(TAG, "NCI_Version: " + nci_version);
@@ -1269,6 +1264,11 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback 
                         && mAlwaysOnState != NfcAdapter.STATE_TURNING_OFF)) {
                 /* Start polling loop */
                 applyRouting(true);
+            }
+
+            if (mIsHceCapable) {
+                // Generate the initial card emulation routing table
+                mCardEmulationManager.onNfcEnabled();
             }
 
             if (mIsRecovering) {
@@ -1422,10 +1422,12 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback 
                     return;
                 }
                 mState = newState;
-                Intent intent = new Intent(NfcAdapter.ACTION_ADAPTER_STATE_CHANGED);
-                intent.setFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT);
-                intent.putExtra(NfcAdapter.EXTRA_ADAPTER_STATE, mState);
-                mContext.sendBroadcastAsUser(intent, UserHandle.CURRENT);
+                if (mAlwaysOnState != NfcAdapter.STATE_TURNING_ON) {
+                    Intent intent = new Intent(NfcAdapter.ACTION_ADAPTER_STATE_CHANGED);
+                    intent.setFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT);
+                    intent.putExtra(NfcAdapter.EXTRA_ADAPTER_STATE, mState);
+                    mContext.sendBroadcastAsUser(intent, UserHandle.CURRENT);
+                }
             }
         }
 
@@ -1666,7 +1668,7 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback 
         }
 
         @Override
-        public synchronized boolean setObserveMode(boolean enable) {
+        public synchronized boolean setObserveMode(boolean enable, String packageName) {
             if (!isNfcEnabled()) {
                 Log.e(TAG, "setObserveMode: NFC must be enabled but is: " + mState);
                 return false;
@@ -1676,7 +1678,6 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback 
                     NFC_OBSERVE_MODE_STATE_CHANGED__TRIGGER_SOURCE__TRIGGER_SOURCE_UNKNOWN;
             if (!isPrivileged(callingUid)) {
                 NfcPermissions.enforceUserPermissions(mContext);
-                String packageName = getPackageNameFromUid(callingUid);
                 if (packageName == null) {
                     Log.e(TAG, "no package name associated with non-privileged calling UID");
                 }
@@ -3569,7 +3570,7 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback 
                     DeviceHost.TagDisconnectedCallback callback =
                             new DeviceHost.TagDisconnectedCallback() {
                                 @Override
-                                public void onTagDisconnected(long handle) {
+                                public void onTagDisconnected() {
                                     mCookieUpToDate = -1;
                                     applyRouting(false);
                                 }

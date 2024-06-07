@@ -18,16 +18,14 @@ package com.android.nfc.emulator;
 
 import android.app.Instrumentation;
 import android.content.Intent;
-import android.os.RemoteException;
+import android.nfc.NfcAdapter;
 import android.util.Log;
 
 import androidx.test.platform.app.InstrumentationRegistry;
-import androidx.test.uiautomator.UiDevice;
 import androidx.test.uiautomator.UiObject;
 import androidx.test.uiautomator.UiObjectNotFoundException;
 import androidx.test.uiautomator.UiScrollable;
 import androidx.test.uiautomator.UiSelector;
-import android.nfc.NfcAdapter;
 
 import com.android.nfc.utils.NfcSnippet;
 
@@ -370,6 +368,19 @@ public class NfcEmulatorDeviceSnippet extends NfcSnippet {
         mActivity = (PollingLoopEmulatorActivity) instrumentation.startActivitySync(intent);
     }
 
+    @Rpc(description = "Open two polling frame emulator activity for two readers test\"")
+    public void startTwoPollingFrameEmulatorActivity() {
+        Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
+
+        Intent intent = new Intent(Intent.ACTION_MAIN);
+        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        intent.setClassName(
+                instrumentation.getTargetContext(),
+                TwoPollingFrameEmulatorActivity.class.getName());
+
+        mActivity = (TwoPollingFrameEmulatorActivity) instrumentation.startActivitySync(intent);
+    }
+
     /** Registers receiver that waits for RF field broadcast */
     @AsyncRpc(description = "Waits for RF field detected broadcast")
     public void asyncWaitForRfOnBroadcast(String callbackId, String eventName) {
@@ -462,6 +473,14 @@ public class NfcEmulatorDeviceSnippet extends NfcSnippet {
     public void closeActivity() {
         if (mActivity != null) {
             mActivity.finish();
+        }
+    }
+
+    /** Wait for preferred service to be set */
+    @Rpc(description = "Waits for preferred service to be set")
+    public void waitForService() {
+        if (mActivity != null) {
+            mActivity.waitForService();
         }
     }
 
