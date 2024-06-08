@@ -35,6 +35,7 @@ public class PollingLoopService extends HceService {
     public static final String POLLING_FRAME_ACTION =
            "com.android.nfc.service.POLLING_FRAME_ACTION";
     public static final String POLLING_FRAME_EXTRA = "POLLING_FRAME_EXTRA";
+    public static final String SERVICE_NAME_EXTRA = "SERVICE_NAME_EXTRA";
     public static final String TAG = "PollingLoopService";
 
     public PollingLoopService() {
@@ -55,6 +56,7 @@ public class PollingLoopService extends HceService {
         pollingFrameIntent.putExtra(
                 EXTRA_DURATION, System.currentTimeMillis() - mStartTime);
         pollingFrameIntent.putExtra(POLLING_FRAME_EXTRA, new ArrayList<PollingFrame>(frames));
+        pollingFrameIntent.putExtra(SERVICE_NAME_EXTRA, this.getClass().getName());
         sendBroadcast(pollingFrameIntent);
     }
 }

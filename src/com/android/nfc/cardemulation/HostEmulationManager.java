@@ -176,7 +176,10 @@ public class HostEmulationManager {
     public void onPreferredPaymentServiceChanged(int userId, final ComponentName service) {
         mHandler.post(() -> {
             synchronized (mLock) {
-                resetActiveService();
+                if (mState == STATE_IDLE || mState == STATE_POLLING_LOOP) {
+                    Log.d(TAG, "onPreferredPaymentServiceChanged, resetting active service");
+                    resetActiveService();
+                }
                 if (service != null) {
                     bindPaymentServiceLocked(userId, service);
                 } else {
@@ -202,6 +205,20 @@ public class HostEmulationManager {
         }
         return bindServiceIfNeededLocked(mPaymentServiceUserId, mPaymentServiceName);
     }
+
+    @TargetApi(35)
+    @FlaggedApi(android.nfc.Flags.FLAG_NFC_OBSERVE_MODE)
+    public void updateForShouldDefaultToObserveMode(boolean enabled) {
+        synchronized (mLock) {
+            if (mState == STATE_IDLE || mState == STATE_POLLING_LOOP) {
+                NfcAdapter adapter = NfcAdapter.getDefaultAdapter(mContext);
+                mHandler.post(() -> adapter.setObserveModeEnabled(enabled));
+            } else {
+                mEnableObserveModeAfterTransaction = enabled;
+            }
+        }
+    }
+
 
     @TargetApi(35)
     @FlaggedApi(android.nfc.Flags.FLAG_NFC_READ_POLLING_LOOP)
@@ -239,6 +256,8 @@ public class HostEmulationManager {
                 mState = STATE_POLLING_LOOP;
             }
             int onCount = 0;
+            int aCount = 0;
+            int bCount = 0;
             if (mPendingPollingLoopFrames == null) {
                 mPendingPollingLoopFrames = new ArrayList<PollingFrame>(1);
             }
@@ -305,21 +324,39 @@ public class HostEmulationManager {
                 if (mActiveService != null) {
                         service = mActiveService;
                 } else if (mPendingPollingLoopFrames.size() >= 3) {
-                    loop_on_off: for (PollingFrame frame : mPendingPollingLoopFrames) {
+                    boolean shouldSendFrames = false;
+                    for (PollingFrame frame : mPendingPollingLoopFrames) {
                         int type = frame.getType();
                         switch (type) {
+                            case PollingFrame.POLLING_LOOP_TYPE_A:
+                                aCount++;
+                                if (aCount > 3) {
+                                    shouldSendFrames = true;
+                                }
+                                break;
+                            case PollingFrame.POLLING_LOOP_TYPE_B:
+                                bCount++;
+                                if (bCount > 3) {
+                                    shouldSendFrames = true;
+                                }
+                                break;
                             case PollingFrame.POLLING_LOOP_TYPE_ON:
                                 onCount++;
                                 break;
                             case PollingFrame.POLLING_LOOP_TYPE_OFF:
                                 // Send the loop data if we've seen at least one on before an off.
-                                if (onCount >=1) {
-                                    service = getForegroundServiceOrDefault();
-                                    break loop_on_off;
+                                if (onCount >= 1) {
+                                    shouldSendFrames = true;
                                 }
                                 break;
                             default:
                         }
+                        if (shouldSendFrames) {
+                            break;
+                        }
+                    }
+                    if (shouldSendFrames) {
+                        service = getForegroundServiceOrDefault();
                     }
                 }
             }
@@ -343,7 +380,10 @@ public class HostEmulationManager {
      */
     public void onPreferredForegroundServiceChanged(int userId, ComponentName service) {
         synchronized (mLock) {
-            resetActiveService();
+            if (mState == STATE_IDLE || mState == STATE_POLLING_LOOP) {
+                Log.d(TAG, "onPreferredForegroundServiceChanged, resetting active service");
+                resetActiveService();
+            }
             if (service != null) {
                 bindServiceIfNeededLocked(userId, service);
             } else {
@@ -369,7 +409,7 @@ public class HostEmulationManager {
             Intent intent = new Intent(TapAgainDialog.ACTION_CLOSE);
             intent.setPackage(NFC_PACKAGE);
             mContext.sendBroadcastAsUser(intent, UserHandle.ALL);
-            if (mState != STATE_IDLE) {
+            if (mState != STATE_IDLE && mState != STATE_POLLING_LOOP) {
                 Log.e(TAG, "Got activation event in non-idle state");
             }
             mState = STATE_W4_SELECT;
@@ -533,7 +573,6 @@ public class HostEmulationManager {
                                 bindServiceIfNeededLocked(user.getIdentifier(), resolvedService);
                         if (existingService != null) {
                             Log.d(TAG, "Binding to existing service");
-                            mState = STATE_XFER;
                             sendDataToServiceLocked(existingService, data);
                         } else {
                             // Waiting for service to be bound
@@ -571,7 +610,6 @@ public class HostEmulationManager {
                                 bindServiceIfNeededLocked(user.getIdentifier(), resolvedService);
                         if (existingService != null) {
                             sendDataToServiceLocked(existingService, data);
-                            mState = STATE_XFER;
                         } else {
                             // Waiting for service to be bound
                             mSelectApdu = data;
@@ -675,6 +713,7 @@ public class HostEmulationManager {
     }
 
     void sendDataToServiceLocked(Messenger service, byte[] data) {
+        mState = STATE_XFER;
         if (service != mActiveService) {
             sendDeactivateToActiveServiceLocked(HostApduService.DEACTIVATION_DESELECTED);
             mActiveService = service;
@@ -880,7 +919,6 @@ public class HostEmulationManager {
                 mServiceName = name;
                 mServiceBound = true;
                 Log.d(TAG, "Service bound: " + name);
-                mState = STATE_XFER;
                 // Send pending select APDU
                 if (mSelectApdu != null) {
                     if (mStatsdUtils != null) {
