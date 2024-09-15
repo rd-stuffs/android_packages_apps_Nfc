@@ -214,7 +214,7 @@ public class NfcService implements DeviceHostListener, ForegroundUtils.Callback 
     static final int ROUTING_WATCHDOG_MS = 10000;
 
     // Default delay used for presence checks
-    static final int DEFAULT_PRESENCE_CHECK_DELAY = 125;
+    static final int DEFAULT_PRESENCE_CHECK_DELAY = 1000;
 
     static final NfcProperties.snoop_log_mode_values NFC_SNOOP_LOG_MODE =
             NfcProperties.snoop_log_mode().orElse(NfcProperties.snoop_log_mode_values.FILTERED);
