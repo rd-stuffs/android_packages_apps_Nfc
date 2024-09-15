@@ -215,7 +215,7 @@ public class NfcService implements DeviceHostListener {
     static final int ROUTING_WATCHDOG_MS = 10000;
 
     // Default delay used for presence checks
-    static final int DEFAULT_PRESENCE_CHECK_DELAY = 125;
+    static final int DEFAULT_PRESENCE_CHECK_DELAY = 1000;
 
     // The amount of time we wait before manually launching
     // the Beam animation when called through the share menu.
