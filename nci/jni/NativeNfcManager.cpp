@@ -43,6 +43,7 @@
 #include "nfa_ee_api.h"
 #include "nfc_brcm_defs.h"
 #include "nfc_config.h"
+#include "phNxpExtns.h"
 #include "rw_api.h"
 
 using android::base::StringPrintf;
@@ -83,6 +84,7 @@ extern void nativeNfcTag_releaseRfInterfaceMutexLock();
 bool gActivated = false;
 SyncEvent gDeactivatedEvent;
 SyncEvent sNfaSetPowerSubState;
+bool legacy_mfc_reader = true;
 int recovery_option = 0;
 int always_on_nfcee_power_and_link_conf = 0;
 int disable_always_on_nfcee_power_and_link_conf = 0;
@@ -188,7 +190,14 @@ void initializeGlobalDebugEnabledFlag() {
   android::base::SetMinimumLogSeverity(nfc_debug_enabled ? android::base::DEBUG
                                                          : android::base::INFO);
 }
+void initializeMfcReaderOption() {
+  legacy_mfc_reader =
+      (NfcConfig::getUnsigned(NAME_LEGACY_MIFARE_READER, 0) != 0) ? true : false;
 
+  DLOG_IF(INFO, nfc_debug_enabled)
+      << __func__ <<": mifare reader option=" << legacy_mfc_reader;
+
+}
 void initializeRecoveryOption() {
   recovery_option = NfcConfig::getUnsigned(NAME_RECOVERY_OPTION, 0);
 
@@ -387,6 +396,11 @@ static void nfaConnectionCallback(uint8_t connEvent,
             (tNFA_INTF_TYPE)eventData->activated.activate_ntf.intf_param.type);
         nativeNfcTag_setActivatedRfProtocol(activatedProtocol);
       }
+      if (EXTNS_GetConnectFlag() == TRUE) {
+        NfcTag::getInstance().setActivationState();
+        nativeNfcTag_doConnectStatus(true);
+        break;
+      }
       NfcTag::getInstance().setActive(true);
       if (sIsDisabling || !sIsNfaEnabled) break;
       gActivated = true;
@@ -438,6 +452,9 @@ static void nfaConnectionCallback(uint8_t connEvent,
         nativeNfcTag_abortWaits();
         NfcTag::getInstance().abort();
       } else if (gIsTagDeactivating) {
+        NfcTag::getInstance().setActive(false);
+        nativeNfcTag_doDeactivateStatus(0);
+      } else if (EXTNS_GetDeactivateFlag() == TRUE) {
         NfcTag::getInstance().setActive(false);
         nativeNfcTag_doDeactivateStatus(0);
       }
@@ -579,6 +596,7 @@ static void nfaConnectionCallback(uint8_t connEvent,
 *******************************************************************************/
 static jboolean nfcManager_initNativeStruc(JNIEnv* e, jobject o) {
   initializeGlobalDebugEnabledFlag();
+  initializeMfcReaderOption();
   initializeRecoveryOption();
   initializeNfceePowerAndLinkConf();
   initializeDisableAlwaysOnNfceePowerAndLinkConf();
@@ -818,6 +836,7 @@ void nfaDeviceManagementCallback(uint8_t dmEvent,
         PowerSwitch::getInstance().abort();
 
         if (!sIsDisabling && sIsNfaEnabled) {
+          EXTNS_Close();
           NFA_Disable(FALSE);
           sIsDisabling = true;
         } else {
@@ -1271,6 +1290,7 @@ static jboolean nfcManager_doInitialize(JNIEnv* e, jobject o) {
       if (stat == NFA_STATUS_OK) {
         sNfaEnableEvent.wait();  // wait for NFA command to finish
       }
+      EXTNS_Init(nfaDeviceManagementCallback, nfaConnectionCallback);
     }
 
     if (stat == NFA_STATUS_OK) {
@@ -1343,6 +1363,7 @@ static jboolean nfcManager_doInitialize(JNIEnv* e, jobject o) {
                                stat);
 
     if (sIsNfaEnabled) {
+      EXTNS_Close();
       stat = NFA_Disable(FALSE /* ungraceful */);
     }
 
@@ -1561,6 +1582,7 @@ static jboolean nfcManager_doDeinitialize(JNIEnv*, jobject) {
 
   if (sIsNfaEnabled) {
     SyncEventGuard guard(sNfaDisableEvent);
+    EXTNS_Close();
     tNFA_STATUS stat = NFA_Disable(TRUE /* graceful */);
     if (stat == NFA_STATUS_OK) {
       LOG(DEBUG) << StringPrintf("%s: wait for completion", __func__);

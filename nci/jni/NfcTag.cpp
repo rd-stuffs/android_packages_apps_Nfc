@@ -29,6 +29,7 @@
 #include "JavaClassConstants.h"
 #include "nfc_brcm_defs.h"
 #include "nfc_config.h"
+#include "phNxpExtns.h"
 #include "rw_int.h"
 
 using android::base::StringPrintf;
@@ -391,6 +392,7 @@ void NfcTag::discoverTechnologies(tNFA_ACTIVATED& activationData) {
     mTechList[mNumTechList] = TARGET_TYPE_KOVIO_BARCODE;
   } else if (NFC_PROTOCOL_MIFARE == rfDetail.protocol) {
     LOG(DEBUG) << StringPrintf("%s: Mifare Classic", fn);
+    EXTNS_MfcInit(activationData);
     mTechList[mNumTechList] =
         TARGET_TYPE_ISO14443_3A;  // is TagTechnology.NFC_A by Java API
     mNumTechList++;
