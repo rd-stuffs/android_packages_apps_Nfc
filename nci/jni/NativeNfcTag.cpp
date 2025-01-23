@@ -1602,12 +1602,12 @@ static jboolean nativeNfcTag_doIsIsoDepNdefFormatable(JNIEnv* e, jobject o,
 static jboolean nativeNfcTag_makeMifareNdefFormat(JNIEnv* e, jobject o,
                                                   uint8_t* key,
                                                   uint32_t keySize) {
-  DLOG_IF(INFO, nfc_debug_enabled) << StringPrintf("%s: enter", __func__);
+  LOG(DEBUG) << StringPrintf("%s: enter", __func__);
   tNFA_STATUS status = NFA_STATUS_OK;
 
   status = nativeNfcTag_doReconnect(e, o);
   if (status != NFA_STATUS_OK) {
-    DLOG_IF(INFO, nfc_debug_enabled)
+    LOG(DEBUG)
         << StringPrintf("%s: reconnect error, status=%u", __func__, status);
     return JNI_FALSE;
   }
@@ -1622,7 +1622,7 @@ static jboolean nativeNfcTag_makeMifareNdefFormat(JNIEnv* e, jobject o,
   status = EXTNS_MfcFormatTag(key, keySize);
 
   if (status == NFA_STATUS_OK) {
-    DLOG_IF(INFO, nfc_debug_enabled)
+    LOG(DEBUG)
         << StringPrintf("%s: wait for completion", __func__);
     sem_wait(&sFormatSem);
     status = sFormatOk ? NFA_STATUS_OK : NFA_STATUS_FAILED;
@@ -1631,7 +1631,7 @@ static jboolean nativeNfcTag_makeMifareNdefFormat(JNIEnv* e, jobject o,
   }
 
   sem_destroy(&sFormatSem);
-  DLOG_IF(INFO, nfc_debug_enabled) << StringPrintf("%s: exit", __func__);
+  LOG(DEBUG) << StringPrintf("%s: exit", __func__);
   return (status == NFA_STATUS_OK) ? JNI_TRUE : JNI_FALSE;
 }
 
@@ -1736,7 +1736,7 @@ static jboolean nativeNfcTag_makeMifareReadonly(JNIEnv* e, jobject o,
 
   sMakeReadonlyStatus = NFA_STATUS_FAILED;
 
-  DLOG_IF(INFO, nfc_debug_enabled) << StringPrintf("%s", __func__);
+  LOG(DEBUG) << StringPrintf("%s", __func__);
 
   /* Create the make_readonly semaphore */
   if (sem_init(&sMakeReadonlySem, 0, 0) == -1) {

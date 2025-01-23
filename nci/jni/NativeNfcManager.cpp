@@ -194,7 +194,7 @@ void initializeMfcReaderOption() {
   legacy_mfc_reader =
       (NfcConfig::getUnsigned("LEGACY_MIFARE_READER", 0) != 0) ? true : false;
 
-  DLOG_IF(INFO, nfc_debug_enabled)
+  LOG(DEBUG)
       << __func__ <<": mifare reader option=" << legacy_mfc_reader;
 
 }

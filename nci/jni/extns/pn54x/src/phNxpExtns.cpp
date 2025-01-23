@@ -21,7 +21,7 @@
 #include <sys/time.h>
 
 #include <android-base/stringprintf.h>
-#include <base/logging.h>
+#include <android-base/logging.h>
 #include <phNxpExtns_MifareStd.h>
 
 using android::base::StringPrintf;
